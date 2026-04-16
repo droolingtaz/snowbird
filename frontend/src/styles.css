@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-surface-0 text-text-primary font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-1;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-3 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-4;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-1 rounded-xl border border-border shadow-card p-4;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
+    transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface-0
+    disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-hover;
+  }
+
+  .btn-ghost {
+    @apply btn text-text-secondary hover:text-text-primary hover:bg-surface-2;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-loss text-white hover:bg-red-700;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary
+    placeholder:text-text-tertiary
+    focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent
+    transition-colors;
+  }
+
+  .label {
+    @apply block text-xs font-medium text-text-secondary mb-1;
+  }
+
+  .table-auto {
+    @apply w-full text-sm;
+  }
+
+  .table-auto thead tr {
+    @apply border-b border-border;
+  }
+
+  .table-auto thead th {
+    @apply px-3 py-2 text-left text-2xs font-semibold uppercase tracking-wider text-text-tertiary;
+  }
+
+  .table-auto tbody tr {
+    @apply border-b border-border/50 hover:bg-surface-2 transition-colors;
+  }
+
+  .table-auto tbody td {
+    @apply px-3 py-2.5 text-text-primary;
+  }
+
+  .stat-up {
+    @apply text-green-profit;
+  }
+
+  .stat-down {
+    @apply text-red-loss;
+  }
+
+  .mono {
+    @apply font-mono tabular-nums;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium;
+  }
+
+  .badge-paper {
+    @apply badge bg-blue-500/20 text-blue-400;
+  }
+
+  .badge-live {
+    @apply badge bg-green-500/20 text-green-400;
+  }
+}
