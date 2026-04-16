@@ -1,0 +1,88 @@
+name: Deploy — SSH + smoke + auto-rollback
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+        description: "Image tag to deploy (e.g. sha-abc1234 or latest)"
+
+jobs:
+  deploy:
+    name: SSH deploy + validation
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-snowbird
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_NAMESPACE: ${{ github.repository_owner }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          SMOKE_ALPACA_KEY: ${{ secrets.SMOKE_ALPACA_KEY }}
+          SMOKE_ALPACA_SECRET: ${{ secrets.SMOKE_ALPACA_SECRET }}
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: ${{ secrets.VM_SSH_PORT || 22 }}
+          envs: IMAGE_TAG,IMAGE_NAMESPACE,GITHUB_ACTOR,GHCR_TOKEN,SMOKE_ALPACA_KEY,SMOKE_ALPACA_SECRET
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd /opt/snowbird
+
+            echo "::group::Preparing deploy"
+            echo "Target image tag: $IMAGE_TAG"
+            PREV_TAG="$(grep '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2 || true)"
+            PREV_TAG="${PREV_TAG:-latest}"
+            echo "Previous tag: $PREV_TAG"
+
+            if [ -n "${GHCR_TOKEN:-}" ]; then
+                echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            fi
+
+            grep -v '^IMAGE_TAG=\|^IMAGE_NAMESPACE=' .env > .env.new 2>/dev/null || true
+            echo "IMAGE_TAG=$IMAGE_TAG" >> .env.new
+            echo "IMAGE_NAMESPACE=$IMAGE_NAMESPACE" >> .env.new
+            mv .env.new .env
+            echo "::endgroup::"
+
+            echo "::group::Pulling images"
+            docker compose -f docker-compose.prod.yml pull
+            echo "::endgroup::"
+
+            echo "::group::Rolling deploy"
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            echo "::endgroup::"
+
+            echo "::group::Post-deploy smoke test"
+            sleep 5
+            export SMOKE_ALPACA_KEY SMOKE_ALPACA_SECRET
+            if bash scripts/smoke_test.sh; then
+                echo "Smoke test passed — deploy $IMAGE_TAG complete."
+                echo "$IMAGE_TAG" >> .deploy_history
+                tail -n 5 .deploy_history > .deploy_history.trim && mv .deploy_history.trim .deploy_history
+            else
+                echo "::error::Smoke test FAILED — rolling back to $PREV_TAG"
+                sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$PREV_TAG/" .env
+                docker compose -f docker-compose.prod.yml pull || true
+                docker compose -f docker-compose.prod.yml up -d
+                sleep 5
+                bash scripts/smoke_test.sh || echo "::error::Rollback smoke also failed — manual intervention required"
+                exit 1
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Cleanup"
+            docker image prune -f --filter "until=168h" || true
+            echo "::endgroup::"
