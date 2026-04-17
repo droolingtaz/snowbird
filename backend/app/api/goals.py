@@ -1,4 +1,7 @@
+from typing import Optional
+
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.deps import CurrentUser, DbSession
 from app.schemas.goals import GoalUpsert, GoalResponse, GoalProjectionResponse
@@ -7,14 +10,14 @@ from app.services.goals import get_goal, upsert_goal, compute_projection
 router = APIRouter(prefix="/goals", tags=["goals"])
 
 
-@router.get("", response_model=GoalResponse)
+@router.get("", response_model=Optional[GoalResponse])
 def read_goal(
     current_user: CurrentUser = None,
     db: DbSession = None,
 ):
     goal = get_goal(db, current_user.id)
     if not goal:
-        raise HTTPException(status_code=404, detail="No income goal set")
+        return JSONResponse(content=None)
     return goal
 
 
@@ -33,7 +36,7 @@ def set_goal(
     )
 
 
-@router.get("/projection", response_model=GoalProjectionResponse)
+@router.get("/projection", response_model=Optional[GoalProjectionResponse])
 def goal_projection(
     account_id: int,
     current_user: CurrentUser = None,
@@ -41,5 +44,5 @@ def goal_projection(
 ):
     result = compute_projection(db, current_user.id, account_id)
     if not result:
-        raise HTTPException(status_code=404, detail="No income goal set")
+        return JSONResponse(content=None)
     return result

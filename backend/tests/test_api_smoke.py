@@ -60,3 +60,28 @@ def test_register_login_me_flow(client):
 def test_unauthorized_rejected(client):
     r = client.get("/api/accounts")
     assert r.status_code in (401, 403)
+
+
+def _auth_header(client) -> dict:
+    """Register + login, return Authorization header."""
+    client.post("/api/auth/register", json={"email": "goal@test.co", "password": "pw123456"})
+    r = client.post("/api/auth/login", json={"email": "goal@test.co", "password": "pw123456"})
+    token = r.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_get_goals_returns_null_when_no_goal(client):
+    """GET /api/goals should return 200 with null body when no goal exists."""
+    headers = _auth_header(client)
+    r = client.get("/api/goals", headers=headers)
+    assert r.status_code == 200
+    assert r.json() is None
+
+
+def test_get_goals_projection_returns_null_when_no_goal(client):
+    """GET /api/goals/projection should return 200 with null body when no goal."""
+    headers = _auth_header(client)
+    # account_id=999 doesn't matter since the goal check comes first
+    r = client.get("/api/goals/projection", params={"account_id": 999}, headers=headers)
+    assert r.status_code == 200
+    assert r.json() is None
