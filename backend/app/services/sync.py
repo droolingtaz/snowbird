@@ -36,6 +36,7 @@ def _safe_decimal(val) -> Optional[Decimal]:
 
 def sync_account(db: Session, account: AlpacaAccount) -> None:
     """Full sync: positions, orders, activities, snapshot."""
+    account_id = account.id
     try:
         client = get_trading_client(account)
         if account.last_sync_at is None:
@@ -47,8 +48,8 @@ def sync_account(db: Session, account: AlpacaAccount) -> None:
         account.last_sync_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as exc:
-        logger.error("Sync error for account %s: %s", account.id, exc)
         db.rollback()
+        logger.error("Sync error for account %s: %s", account_id, exc)
 
 
 def _sync_positions(db: Session, client: TradingClient, account: AlpacaAccount) -> None:
@@ -227,23 +228,32 @@ def _backfill_snapshots(db: Session, client: TradingClient, account: AlpacaAccou
         equities = history.get("equity", [])
         profit_losses = history.get("profit_loss", [])
 
+        # Build candidate rows, skipping null equity days
+        candidates = []
         for i, ts in enumerate(timestamps):
             snap_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
             equity_val = _safe_decimal(equities[i]) if i < len(equities) and equities[i] is not None else None
             if equity_val is None:
                 continue
-
-            existing = db.execute(
-                select(PortfolioSnapshot).where(
-                    PortfolioSnapshot.account_id == account.id,
-                    PortfolioSnapshot.date == snap_date,
-                )
-            ).scalar_one_or_none()
-            if existing:
-                continue
-
             pnl = _safe_decimal(profit_losses[i]) if i < len(profit_losses) and profit_losses[i] is not None else None
+            candidates.append((snap_date, equity_val, pnl))
 
+        # Query existing dates for this account so we skip duplicates
+        candidate_dates = [c[0] for c in candidates]
+        existing_dates = set()
+        if candidate_dates:
+            rows = db.execute(
+                select(PortfolioSnapshot.date).where(
+                    PortfolioSnapshot.account_id == account.id,
+                    PortfolioSnapshot.date.in_(candidate_dates),
+                )
+            ).all()
+            existing_dates = {row[0] for row in rows}
+
+        inserted = 0
+        for snap_date, equity_val, pnl in candidates:
+            if snap_date in existing_dates:
+                continue
             snap = PortfolioSnapshot(
                 account_id=account.id,
                 date=snap_date,
@@ -251,9 +261,10 @@ def _backfill_snapshots(db: Session, client: TradingClient, account: AlpacaAccou
                 pnl=pnl,
             )
             db.add(snap)
+            inserted += 1
 
         db.flush()
-        logger.info("Backfilled %d portfolio snapshots for account %s", len(timestamps), account.id)
+        logger.info("Backfilled %d portfolio snapshots for account %s", inserted, account.id)
     except Exception as exc:
         logger.warning("Could not backfill portfolio snapshots (skipping): %s", exc)
 

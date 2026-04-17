@@ -366,6 +366,60 @@ class TestSyncAccountBackfillIntegration:
         assert len(snapshots) >= 30
         assert call_count[0] == 2  # one for backfill, one for activities
 
+    def test_full_sync_twice_is_idempotent(self, db, demo_account):
+        """Running sync_account twice (first sync with backfill) does not raise."""
+        assert demo_account.last_sync_at is None
+
+        mock_client = MagicMock()
+        mock_client.get_all_positions.return_value = []
+        mock_client.get_orders.return_value = []
+        mock_client.get_account.return_value = MagicMock(
+            equity="10000", cash="2000", long_market_value="8000",
+        )
+
+        def _fake_httpx_get(url, **kwargs):
+            if "portfolio/history" in url:
+                return _mock_httpx_response(_fake_portfolio_history(30))
+            return _mock_httpx_response([])  # activities
+
+        with patch("app.services.sync.get_trading_client", return_value=mock_client), \
+             patch("httpx.get", side_effect=_fake_httpx_get):
+            sync_account(db, demo_account)
+
+        # Reset last_sync_at to simulate a retry that triggers backfill again
+        demo_account.last_sync_at = None
+        db.flush()
+
+        with patch("app.services.sync.get_trading_client", return_value=mock_client), \
+             patch("httpx.get", side_effect=_fake_httpx_get):
+            # Second sync must not raise (idempotent backfill)
+            sync_account(db, demo_account)
+
+        snapshots = db.execute(
+            select(PortfolioSnapshot).where(
+                PortfolioSnapshot.account_id == demo_account.id
+            )
+        ).scalars().all()
+        # Should still have ~31 snapshots (30 backfill + 1 today), not doubled
+        assert 30 <= len(snapshots) <= 32
+
+    def test_sync_error_does_not_raise_pending_rollback(self, db, demo_account):
+        """A DB error in sync_account is handled gracefully without PendingRollbackError."""
+        mock_client = MagicMock()
+        mock_client.get_all_positions.side_effect = RuntimeError("simulated DB failure")
+
+        with patch("app.services.sync.get_trading_client", return_value=mock_client):
+            # Must not raise — the except handler should rollback and log
+            sync_account(db, demo_account)
+
+        # Session should still be usable after the error
+        snapshots = db.execute(
+            select(PortfolioSnapshot).where(
+                PortfolioSnapshot.account_id == demo_account.id
+            )
+        ).scalars().all()
+        assert len(snapshots) == 0
+
     def test_subsequent_sync_skips_backfill(self, db, demo_account):
         """Backfill is NOT called when last_sync_at is set."""
         demo_account.last_sync_at = datetime.now(timezone.utc)
