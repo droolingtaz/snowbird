@@ -7,7 +7,6 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import select
 
 from alpaca.trading.client import TradingClient
@@ -228,43 +227,29 @@ def _backfill_snapshots(db: Session, client: TradingClient, account: AlpacaAccou
         equities = history.get("equity", [])
         profit_losses = history.get("profit_loss", [])
 
-        # Build candidate rows, skipping null equity days
-        candidates = []
+        # Build payload rows, skipping null equity days
+        payload = []
         for i, ts in enumerate(timestamps):
             snap_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
             equity_val = _safe_decimal(equities[i]) if i < len(equities) and equities[i] is not None else None
             if equity_val is None:
                 continue
             pnl = _safe_decimal(profit_losses[i]) if i < len(profit_losses) and profit_losses[i] is not None else None
-            candidates.append((snap_date, equity_val, pnl))
+            payload.append({"account_id": account.id, "date": snap_date, "equity": equity_val, "pnl": pnl})
 
-        # Query existing dates for this account so we skip duplicates
-        candidate_dates = [c[0] for c in candidates]
-        existing_dates = set()
-        if candidate_dates:
-            rows = db.execute(
-                select(PortfolioSnapshot.date).where(
-                    PortfolioSnapshot.account_id == account.id,
-                    PortfolioSnapshot.date.in_(candidate_dates),
-                )
-            ).all()
-            existing_dates = {row[0] for row in rows}
+        if payload:
+            # Use dialect-appropriate INSERT ... ON CONFLICT DO NOTHING
+            dialect_name = db.bind.dialect.name if db.bind else "postgresql"
+            if dialect_name == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            stmt = dialect_insert(PortfolioSnapshot.__table__).values(payload)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["account_id", "date"])
+            db.execute(stmt)
+            db.flush()
 
-        inserted = 0
-        for snap_date, equity_val, pnl in candidates:
-            if snap_date in existing_dates:
-                continue
-            snap = PortfolioSnapshot(
-                account_id=account.id,
-                date=snap_date,
-                equity=equity_val,
-                pnl=pnl,
-            )
-            db.add(snap)
-            inserted += 1
-
-        db.flush()
-        logger.info("Backfilled %d portfolio snapshots for account %s", inserted, account.id)
+        logger.info("Backfilled portfolio snapshots for account %s", account.id)
     except Exception as exc:
         logger.warning("Could not backfill portfolio snapshots (skipping): %s", exc)
 
