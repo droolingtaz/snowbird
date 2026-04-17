@@ -21,7 +21,7 @@ def seed() -> None:
             return
 
         demo = User(
-            email="demo@local",
+            email="demo@example.com",
             password_hash=hash_password("demo12345"),
         )
         db.add(demo)
