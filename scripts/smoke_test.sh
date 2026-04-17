@@ -65,38 +65,49 @@ if [ -n "$ALPACA_KEY" ] && [ -n "$ALPACA_SECRET" ]; then
 
     AUTH="Authorization: Bearer $TOKEN"
     JSON="Content-Type: application/json"
+    SMOKE_ACCT_ID=""
+
+    # Cleanup: delete the smoke-paper account when this block exits (success or failure)
+    cleanup_smoke_account() {
+        if [ -n "$SMOKE_ACCT_ID" ]; then
+            log "  -> Cleaning up smoke-paper account $SMOKE_ACCT_ID ..."
+            curl -sS -X DELETE -H "Authorization: Bearer $TOKEN" \
+                "$BACKEND/api/accounts/$SMOKE_ACCT_ID" >/dev/null 2>&1 || true
+        fi
+    }
+    trap cleanup_smoke_account EXIT
 
     # Add a paper account (idempotent: if already present, we reuse)
     log "  -> Adding paper Alpaca account ..."
     ACCT_RESP=$(curl -sS -X POST "$BACKEND/api/accounts" \
         -H "$AUTH" -H "$JSON" \
         -d "{\"label\":\"smoke-paper\",\"mode\":\"paper\",\"api_key\":\"$ALPACA_KEY\",\"api_secret\":\"$ALPACA_SECRET\"}" || true)
-    ACCT_ID=$(curl -fsS -H "$AUTH" "$BACKEND/api/accounts" \
+    SMOKE_ACCT_ID=$(curl -fsS -H "$AUTH" "$BACKEND/api/accounts" \
         | python3 -c 'import sys,json; xs=json.load(sys.stdin); print([a["id"] for a in xs if a["label"]=="smoke-paper"][0])')
-    [ -n "$ACCT_ID" ] || fail "Could not create/find smoke-paper account"
-    log "  -> Account id: $ACCT_ID"
+    [ -n "$SMOKE_ACCT_ID" ] || fail "Could not create/find smoke-paper account"
+    log "  -> Account id: $SMOKE_ACCT_ID"
 
     log "  -> Testing Alpaca connection ..."
-    curl -fsS -X POST -H "$AUTH" "$BACKEND/api/accounts/$ACCT_ID/test" >/dev/null \
+    curl -fsS -X POST -H "$AUTH" "$BACKEND/api/accounts/$SMOKE_ACCT_ID/test" >/dev/null \
         || fail "Alpaca connection test failed"
 
     log "  -> Syncing ..."
-    curl -fsS -X POST -H "$AUTH" "$BACKEND/api/accounts/$ACCT_ID/sync" >/dev/null \
+    curl -fsS -X POST -H "$AUTH" "$BACKEND/api/accounts/$SMOKE_ACCT_ID/sync" >/dev/null \
         || fail "Account sync failed"
 
     log "  -> Fetching portfolio summary ..."
-    SUMMARY=$(curl -fsS -H "$AUTH" "$BACKEND/api/portfolio/summary?account_id=$ACCT_ID")
+    SUMMARY=$(curl -fsS -H "$AUTH" "$BACKEND/api/portfolio/summary?account_id=$SMOKE_ACCT_ID")
     echo "$SUMMARY" | python3 -m json.tool >/dev/null || fail "Summary not valid JSON"
 
     log "  -> Placing \$1 notional paper BUY on AAPL ..."
     ORDER=$(curl -sS -X POST "$BACKEND/api/orders" \
         -H "$AUTH" -H "$JSON" \
-        -d "{\"account_id\":$ACCT_ID,\"symbol\":\"AAPL\",\"side\":\"buy\",\"type\":\"market\",\"notional\":1,\"time_in_force\":\"day\"}")
+        -d "{\"account_id\":$SMOKE_ACCT_ID,\"symbol\":\"AAPL\",\"side\":\"buy\",\"type\":\"market\",\"notional\":1,\"time_in_force\":\"day\"}")
     ORDER_ID=$(echo "$ORDER" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("id",""))' 2>/dev/null || echo "")
 
     if [ -n "$ORDER_ID" ]; then
         log "  -> Order $ORDER_ID placed. Cancelling ..."
-        curl -sS -X DELETE -H "$AUTH" "$BACKEND/api/orders/$ORDER_ID?account_id=$ACCT_ID" >/dev/null || true
+        curl -sS -X DELETE -H "$AUTH" "$BACKEND/api/orders/$ORDER_ID?account_id=$SMOKE_ACCT_ID" >/dev/null || true
     else
         # Market may be closed or fractional not enabled — acceptable; log the response
         log "  -> Order placement returned: $ORDER  (non-fatal if market closed)"
