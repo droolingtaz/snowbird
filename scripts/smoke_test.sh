@@ -88,7 +88,7 @@ if [ -n "$ALPACA_KEY" ] && [ -n "$ALPACA_SECRET" ]; then
     SUMMARY=$(curl -fsS -H "$AUTH" "$BACKEND/api/portfolio/summary?account_id=$ACCT_ID")
     echo "$SUMMARY" | python3 -m json.tool >/dev/null || fail "Summary not valid JSON"
 
-    log "  -> Placing $1 notional paper BUY on AAPL ..."
+    log "  -> Placing \$1 notional paper BUY on AAPL ..."
     ORDER=$(curl -sS -X POST "$BACKEND/api/orders" \
         -H "$AUTH" -H "$JSON" \
         -d "{\"account_id\":$ACCT_ID,\"symbol\":\"AAPL\",\"side\":\"buy\",\"type\":\"market\",\"notional\":1,\"time_in_force\":\"day\"}")
