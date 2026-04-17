@@ -13,7 +13,7 @@ router = APIRouter(prefix="/market", tags=["market"])
 def _get_any_account(db, user_id: int) -> AlpacaAccount | None:
     return db.execute(
         select(AlpacaAccount).where(AlpacaAccount.user_id == user_id, AlpacaAccount.active == True)
-    ).scalar_one_or_none()
+    ).scalars().first()
 
 
 @router.get("/search", response_model=List[AssetSearchResult])
