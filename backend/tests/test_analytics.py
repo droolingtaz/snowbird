@@ -320,3 +320,111 @@ class TestBenchmark:
         assert points == []
         assert port_ret is None
         assert bench_ret is None
+
+    # ------------------------------------------------------------------
+    # Range / period filtering
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _seed_long_history(db, account_id, total_days=400):
+        """Seed daily snapshots and matching bars for *total_days*.
+
+        Returns (snapshots_list, fake_bars_list).  Bars use every calendar
+        day so that the intersection with snapshots is 1-to-1.
+        """
+        today = date.today()
+        start = today - timedelta(days=total_days)
+        eq = 100_000.0
+        snaps = []
+        bars = []
+        for i in range(total_days + 1):
+            d = start + timedelta(days=i)
+            snaps.append(PortfolioSnapshot(
+                account_id=account_id,
+                date=d,
+                equity=Decimal(str(round(eq, 4))),
+                cash=Decimal("0"),
+                long_market_value=Decimal(str(round(eq, 4))),
+                pnl=Decimal("0"),
+            ))
+            bars.append({
+                "timestamp": str(d),
+                "open": 400.0 + i * 0.5,
+                "high": 405.0 + i * 0.5,
+                "low": 399.0 + i * 0.5,
+                "close": 402.0 + i * 0.5,
+                "volume": 1_000_000.0,
+            })
+            eq *= 1.0003
+        db.add_all(snaps)
+        db.commit()
+        return snaps, bars
+
+    def test_benchmark_range_1W(self, db, demo_account):
+        """period=1W → ~7 points (last 7 calendar days)."""
+        _, bars = self._seed_long_history(db, demo_account.id)
+        with patch("app.services.market_data.get_bars_cached", return_value=bars):
+            points, _, _ = compute_benchmark(
+                db, demo_account.id, "SPY", "1W", account=demo_account,
+            )
+        assert 5 <= len(points) <= 8
+        assert points[0].portfolio == 100.0
+        assert points[0].benchmark == 100.0
+
+    def test_benchmark_range_1M(self, db, demo_account):
+        """period=1M → ~30 points."""
+        _, bars = self._seed_long_history(db, demo_account.id)
+        with patch("app.services.market_data.get_bars_cached", return_value=bars):
+            points, _, _ = compute_benchmark(
+                db, demo_account.id, "SPY", "1M", account=demo_account,
+            )
+        assert 25 <= len(points) <= 31
+        assert points[0].portfolio == 100.0
+        assert points[0].benchmark == 100.0
+
+    def test_benchmark_range_3M(self, db, demo_account):
+        """period=3M → ~90 points."""
+        _, bars = self._seed_long_history(db, demo_account.id)
+        with patch("app.services.market_data.get_bars_cached", return_value=bars):
+            points, _, _ = compute_benchmark(
+                db, demo_account.id, "SPY", "3M", account=demo_account,
+            )
+        assert 80 <= len(points) <= 91
+        assert points[0].portfolio == 100.0
+        assert points[0].benchmark == 100.0
+
+    def test_benchmark_range_YTD(self, db, demo_account):
+        """period=YTD → Jan 1 to today."""
+        _, bars = self._seed_long_history(db, demo_account.id)
+        today = date.today()
+        expected_days = (today - date(today.year, 1, 1)).days + 1
+        with patch("app.services.market_data.get_bars_cached", return_value=bars):
+            points, _, _ = compute_benchmark(
+                db, demo_account.id, "SPY", "YTD", account=demo_account,
+            )
+        assert abs(len(points) - expected_days) <= 2
+        assert points[0].portfolio == 100.0
+        assert points[0].benchmark == 100.0
+
+    def test_benchmark_range_1Y(self, db, demo_account):
+        """period=1Y → ~365 points."""
+        _, bars = self._seed_long_history(db, demo_account.id)
+        with patch("app.services.market_data.get_bars_cached", return_value=bars):
+            points, _, _ = compute_benchmark(
+                db, demo_account.id, "SPY", "1Y", account=demo_account,
+            )
+        assert 355 <= len(points) <= 366
+        assert points[0].portfolio == 100.0
+        assert points[0].benchmark == 100.0
+
+    def test_benchmark_ranges_differ(self, db, demo_account):
+        """Different periods must produce different point counts."""
+        _, bars = self._seed_long_history(db, demo_account.id)
+        counts = {}
+        for period in ("1W", "1M", "3M", "1Y"):
+            with patch("app.services.market_data.get_bars_cached", return_value=bars):
+                points, _, _ = compute_benchmark(
+                    db, demo_account.id, "SPY", period, account=demo_account,
+                )
+            counts[period] = len(points)
+        assert counts["1W"] < counts["1M"] < counts["3M"] < counts["1Y"]
