@@ -22,7 +22,9 @@ export default function Dashboard() {
   const accountId = useAuthStore((s) => s.accountId);
   const [period, setPeriod] = useState("1M");
   const [showBenchmark, setShowBenchmark] = useState(false);
-  const [allocBy, setAllocBy] = useState("sector");
+  const [allocBy, setAllocBy] = useState(
+    () => localStorage.getItem("snowbird.allocation.groupBy") || "sector",
+  );
 
   const { data: summary, isLoading: sumLoading } = usePortfolioSummary();
   const { data: history, isLoading: histLoading } = usePortfolioHistory(period);
@@ -104,7 +106,11 @@ export default function Dashboard() {
             <select
               className="text-xs bg-transparent text-text-secondary border border-border rounded px-1 py-0.5"
               value={allocBy}
-              onChange={(e) => setAllocBy(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                localStorage.setItem("snowbird.allocation.groupBy", v);
+                setAllocBy(v);
+              }}
             >
               <option value="sector">Sector</option>
               <option value="asset_class">Asset Class</option>

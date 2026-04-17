@@ -315,7 +315,6 @@ def _snapshot_equity(db: Session, client: TradingClient, account: AlpacaAccount)
 
 def refresh_instruments(db: Session, account: AlpacaAccount) -> None:
     """Refresh instrument metadata for held symbols."""
-    from alpaca.trading.requests import GetAssetsRequest
     client = get_trading_client(account)
     positions = db.execute(
         select(Position).where(Position.account_id == account.id)
@@ -343,3 +342,73 @@ def refresh_instruments(db: Session, account: AlpacaAccount) -> None:
             logger.warning("Failed to refresh instrument %s: %s", pos.symbol, exc)
 
     db.commit()
+
+    # Backfill sector/industry from Finnhub company profiles
+    _backfill_sectors(db, [p.symbol for p in positions])
+
+
+def _backfill_sectors(db: Session, symbols: list[str]) -> None:
+    """Fetch company profiles from Finnhub and update sector/industry on instruments."""
+    import time as _time
+    from app.services.finnhub import get_company_profile
+
+    unique_symbols = sorted(set(symbols))
+    updated = 0
+    for sym in unique_symbols:
+        inst = db.get(Instrument, sym)
+        if inst is None:
+            continue
+        # Skip if sector already populated (avoids unnecessary API calls)
+        if inst.sector:
+            logger.debug("Sector already set for %s, skipping Finnhub call", sym)
+            continue
+        profile = get_company_profile(sym)
+        if profile is None:
+            logger.info("No Finnhub profile for %s", sym)
+            continue
+        sector = profile.get("finnhubIndustry")
+        if sector:
+            inst.sector = sector
+            inst.updated_at = datetime.now(timezone.utc)
+            updated += 1
+            logger.info("Updated sector for %s -> %s", sym, sector)
+        # Respect Finnhub free-tier rate limit (60 calls/min)
+        _time.sleep(1.1)
+
+    if updated:
+        db.commit()
+        logger.info("Backfilled sector for %d instruments", updated)
+
+
+def backfill_all_sectors(db: Session) -> int:
+    """Backfill sectors for every instrument row — used by CLI / admin tasks.
+
+    Returns the number of instruments updated.
+    """
+    import time as _time
+    from app.services.finnhub import get_company_profile
+
+    instruments = db.execute(select(Instrument)).scalars().all()
+    updated = 0
+    total = len(instruments)
+    for idx, inst in enumerate(instruments, 1):
+        if inst.sector:
+            logger.debug("[%d/%d] %s already has sector=%s", idx, total, inst.symbol, inst.sector)
+            continue
+        profile = get_company_profile(inst.symbol)
+        if profile is None:
+            logger.info("[%d/%d] No Finnhub profile for %s", idx, total, inst.symbol)
+            _time.sleep(1.1)
+            continue
+        sector = profile.get("finnhubIndustry")
+        if sector:
+            inst.sector = sector
+            inst.updated_at = datetime.now(timezone.utc)
+            updated += 1
+            logger.info("[%d/%d] %s -> %s", idx, total, inst.symbol, sector)
+        _time.sleep(1.1)
+
+    if updated:
+        db.commit()
+    logger.info("Backfill complete: %d/%d instruments updated", updated, total)
+    return updated
