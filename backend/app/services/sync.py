@@ -1,9 +1,12 @@
 """Sync engine: pulls data from Alpaca into the local DB."""
 from __future__ import annotations
 
+import json
 import logging
+import pathlib
 from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
+from functools import lru_cache
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -22,6 +25,15 @@ from app.models.instrument import Instrument
 from app.services.alpaca import get_trading_client, get_data_client
 
 logger = logging.getLogger(__name__)
+
+_ETF_JSON = pathlib.Path(__file__).resolve().parent.parent / "data" / "etf_classifications.json"
+
+
+@lru_cache(maxsize=1)
+def _load_etf_classifications() -> dict:
+    """Load curated ETF classification map (cached for process lifetime)."""
+    with open(_ETF_JSON) as f:
+        return json.load(f)
 
 
 def _safe_decimal(val) -> Optional[Decimal]:
@@ -464,10 +476,12 @@ def _sector_from_category(category: str) -> str | None:
 
 
 def _backfill_sectors(db: Session, symbols: list[str]) -> None:
-    """Classify instruments via yfinance (primary) with Finnhub stock fallback."""
+    """Classify instruments via curated map (primary), then yfinance/Finnhub fallback."""
     unique_symbols = sorted(set(symbols))
+    curated = _load_etf_classifications()
     updated = 0
-    for sym in unique_symbols:
+    total = len(unique_symbols)
+    for idx, sym in enumerate(unique_symbols, 1):
         inst = db.get(Instrument, sym)
         if inst is None:
             continue
@@ -475,6 +489,22 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
         if inst.sector:
             logger.debug("Sector already set for %s, skipping classification", sym)
             continue
+        # Primary: curated ETF map
+        if sym in curated:
+            entry = curated[sym]
+            inst.is_etf = entry["is_etf"]
+            inst.asset_class = entry["asset_class"]
+            inst.etf_category = entry["etf_category"]
+            inst.sector = entry["sector"]
+            inst.name = entry["name"]
+            inst.updated_at = datetime.now(timezone.utc)
+            updated += 1
+            logger.info(
+                "[%d/%d] Curated map: %s -> asset_class=%s, sector=%s",
+                idx, total, sym, inst.asset_class, inst.sector,
+            )
+            continue
+        # Fallback: yfinance + Finnhub
         if _classify_instrument(inst):
             updated += 1
 
@@ -486,13 +516,14 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
 def backfill_all_sectors(db: Session) -> int:
     """Backfill sectors for every instrument row — used by CLI / admin tasks.
 
-    Uses yfinance first, then falls back to Finnhub stock/profile2.
+    Checks curated ETF map first, then falls back to yfinance / Finnhub.
     Returns the number of instruments updated.
 
     On failure for a single symbol, logs a WARNING and continues to the next
     symbol so the entire batch is not aborted.
     """
     instruments = db.execute(select(Instrument)).scalars().all()
+    curated = _load_etf_classifications()
     updated = 0
     failed = 0
     total = len(instruments)
@@ -500,6 +531,22 @@ def backfill_all_sectors(db: Session) -> int:
         if inst.sector:
             logger.debug("[%d/%d] %s already has sector=%s — skipping", idx, total, inst.symbol, inst.sector)
             continue
+        # Primary: curated ETF map
+        if inst.symbol in curated:
+            entry = curated[inst.symbol]
+            inst.is_etf = entry["is_etf"]
+            inst.asset_class = entry["asset_class"]
+            inst.etf_category = entry["etf_category"]
+            inst.sector = entry["sector"]
+            inst.name = entry["name"]
+            inst.updated_at = datetime.now(timezone.utc)
+            updated += 1
+            logger.info(
+                "[%d/%d] Curated map: %s -> asset_class=%s, sector=%s",
+                idx, total, inst.symbol, inst.asset_class, inst.sector,
+            )
+            continue
+        # Fallback: yfinance + Finnhub
         logger.info("[%d/%d] Classifying %s ...", idx, total, inst.symbol)
         try:
             if _classify_instrument(inst):
