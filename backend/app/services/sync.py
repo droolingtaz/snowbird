@@ -139,13 +139,13 @@ def _sync_orders(db: Session, client: TradingClient, account: AlpacaAccount) -> 
 
 
 def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount, days: int = 7) -> None:
-    from alpaca.trading.requests import GetAccountActivitiesRequest
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    req = GetAccountActivitiesRequest(after=since)
     try:
+        from alpaca.trading.requests import GetAccountActivitiesRequest
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        req = GetAccountActivitiesRequest(after=since)
         activities = client.get_account_activities(activity_filter=req)
     except Exception as exc:
-        logger.warning("Could not fetch activities: %s", exc)
+        logger.warning("Could not fetch activities (skipping): %s", exc)
         return
 
     for act in activities:
