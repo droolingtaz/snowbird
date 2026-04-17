@@ -104,9 +104,8 @@ CD workflow handles `docker login` automatically as part of each deploy.
 - Frontend bundle served from port 8080
 - Demo user login → JWT → authenticated `/api/accounts` call
 - **If `SMOKE_ALPACA_*` secrets are set**: adds a paper account, runs `/test`,
-  forces a full `/sync`, fetches the portfolio summary, places a **$1 notional
-  market BUY on AAPL**, then cancels it. Proves the entire stack end-to-end
-  against Alpaca paper.
+  forces a full `/sync`, and fetches the portfolio summary. Proves the entire
+  stack end-to-end against Alpaca paper.
 
 ### Auto-rollback
 If any smoke check fails, the workflow:
@@ -153,18 +152,25 @@ No cloud storage is required; backups never leave the host.
 | Retention | **14 days** (older files pruned automatically) |
 | Log | `/var/log/snowbird-backup.log` |
 
-### One-time install (run on the VM as root)
+### Installation
+
+The deploy pipeline automatically installs `pg_backup.sh`, the systemd
+service, and the timer on every deploy. You only need to run the one-time
+sudoers update below so the runner can manage the systemd units.
+
+#### One-time sudoers update (run on the VM)
+
+Add the following line to `/etc/sudoers.d/snowbird-runner` (replace
+`bparker` with the runner's username if different):
+
+```
+bparker ALL=(root) NOPASSWD: /usr/bin/install, /bin/chown, /bin/systemctl daemon-reload, /bin/systemctl enable --now snowbird-backup.timer, /bin/systemctl restart snowbird-backup.timer, /bin/systemctl disable --now snowbird-backup.timer
+```
+
+Then create the backup directory if it doesn't exist:
 
 ```bash
-# Copy the script into the deployment directory
-sudo cp /path/to/repo/scripts/pg_backup.sh /opt/snowbird/scripts/
-sudo chmod +x /opt/snowbird/scripts/pg_backup.sh
-
-# Install systemd units
-sudo cp scripts/systemd/snowbird-backup.service /etc/systemd/system/
-sudo cp scripts/systemd/snowbird-backup.timer   /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now snowbird-backup.timer
+sudo mkdir -p /var/backups/snowbird
 ```
 
 ### Check status
