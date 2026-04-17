@@ -94,6 +94,7 @@ def get_bars_cached(symbol: str, timeframe: str, start: str, end: str, account=N
         from app.services.alpaca import get_data_client
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        from alpaca.data.enums import DataFeed
         from datetime import datetime
 
         timeframe_map = {
@@ -113,6 +114,7 @@ def get_bars_cached(symbol: str, timeframe: str, start: str, end: str, account=N
             timeframe=tf,
             start=datetime.fromisoformat(start) if "T" not in start else datetime.fromisoformat(start),
             end=datetime.fromisoformat(end) if "T" not in end else datetime.fromisoformat(end),
+            feed=DataFeed.IEX,
         )
         resp = client.get_stock_bars(req)
         bars_data = resp.get(symbol, [])

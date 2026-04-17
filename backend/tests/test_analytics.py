@@ -10,7 +10,7 @@ from app.models.activity import Activity
 from app.models.position import Position
 from app.models.instrument import Instrument
 from app.services.analytics import (
-    compute_daily_returns, compute_performance,
+    compute_daily_returns, compute_performance, compute_benchmark,
     compute_irr, compute_passive_income, compute_movers,
 )
 
@@ -203,6 +203,13 @@ class TestPassiveIncome:
 class TestMovers:
     """Today's gainers and losers sorting."""
 
+    def test_movers_empty_positions(self, db, demo_account):
+        """No positions → empty gainers/losers."""
+        with patch("app.services.market_data.get_quote_cached", return_value=None):
+            result = compute_movers(db, demo_account.id, demo_account, limit=5)
+        assert result.gainers == []
+        assert result.losers == []
+
     def test_movers_sorting(self, db, demo_account):
         """Gainers sorted descending, losers sorted by most negative."""
         positions = [
@@ -242,3 +249,74 @@ class TestMovers:
         # TSLA has higher absolute $ loss ($200 vs $50)
         assert result.losers[0].symbol == "TSLA"
         assert result.losers[1].symbol == "META"
+
+
+# ---------------------------------------------------------------------------
+# Benchmark tests
+# ---------------------------------------------------------------------------
+
+class TestBenchmark:
+    """Benchmark comparison: portfolio vs SPY."""
+
+    def test_benchmark_returns_points_with_mocked_bars(self, db, demo_account):
+        """Mocked Alpaca bars + real snapshots → non-empty points list."""
+        start = date.today() - timedelta(days=10)
+        # Seed 10 days of snapshots
+        for i in range(10):
+            db.add(PortfolioSnapshot(
+                account_id=demo_account.id,
+                date=start + timedelta(days=i),
+                equity=Decimal(str(100_000 + i * 100)),
+                cash=Decimal("0"),
+                long_market_value=Decimal(str(100_000 + i * 100)),
+                pnl=Decimal("0"),
+            ))
+        db.commit()
+
+        # Build fake bars matching the same dates
+        fake_bars = [
+            {
+                "timestamp": str(start + timedelta(days=i)),
+                "open": 400.0 + i,
+                "high": 405.0 + i,
+                "low": 399.0 + i,
+                "close": 402.0 + i,
+                "volume": 1_000_000.0,
+            }
+            for i in range(10)
+        ]
+
+        with patch("app.services.market_data.get_bars_cached", return_value=fake_bars):
+            points, port_ret, bench_ret = compute_benchmark(
+                db, demo_account.id, "SPY", "1M", account=demo_account,
+            )
+
+        assert len(points) == 10
+        # First point should be normalized to 100
+        assert points[0].portfolio == 100.0
+        assert points[0].benchmark == 100.0
+        # Returns should be non-None
+        assert port_ret is not None
+        assert bench_ret is not None
+
+    def test_benchmark_no_account_no_bars(self, db, demo_account):
+        """Without account, get_bars_cached returns [] → empty result."""
+        _seed_linear_snapshots(db, demo_account.id, days=10)
+
+        with patch("app.services.market_data.get_bars_cached", return_value=[]):
+            points, port_ret, bench_ret = compute_benchmark(
+                db, demo_account.id, "SPY", "1M", account=None,
+            )
+
+        assert points == []
+        assert port_ret is None
+        assert bench_ret is None
+
+    def test_benchmark_no_snapshots(self, db, demo_account):
+        """No portfolio snapshots → empty result, no crash."""
+        points, port_ret, bench_ret = compute_benchmark(
+            db, demo_account.id, "SPY", "1M", account=demo_account,
+        )
+        assert points == []
+        assert port_ret is None
+        assert bench_ret is None

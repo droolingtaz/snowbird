@@ -42,7 +42,7 @@ def benchmark(
         )
     ).scalar_one_or_none()
 
-    points, port_ret, bench_ret = compute_benchmark(db, account_id, symbol, period)
+    points, port_ret, bench_ret = compute_benchmark(db, account_id, symbol, period, account=acct)
     return BenchmarkResponse(
         symbol=symbol,
         points=points,

@@ -171,7 +171,7 @@ def compute_monthly_returns(db: Session, account_id: int) -> List[MonthlyReturn]
 
 
 def compute_benchmark(
-    db: Session, account_id: int, benchmark_symbol: str, period: str
+    db: Session, account_id: int, benchmark_symbol: str, period: str, account=None
 ) -> Tuple[List[BenchmarkPoint], Optional[float], Optional[float]]:
     """Compute portfolio vs benchmark normalized series."""
     from app.services.market_data import get_bars_cached
@@ -185,8 +185,9 @@ def compute_benchmark(
 
     # Fetch benchmark bars
     try:
-        bars = get_bars_cached(benchmark_symbol, "1Day", str(since), str(date.today()))
-    except Exception:
+        bars = get_bars_cached(benchmark_symbol, "1Day", str(since), str(date.today()), account=account)
+    except Exception as exc:
+        logger.warning("Benchmark bars fetch failed for %s: %s", benchmark_symbol, exc)
         bars = []
 
     if not bars:
