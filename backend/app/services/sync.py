@@ -157,7 +157,6 @@ def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount,
             },
             params={
                 "after": since.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "activity_types": "DIV,DIVCGL,DIVCGS,DIVFEE,DIVFT,DIVNRA,DIVROC,DIVTW,DIVTXEX,FILL,ACATC,ACATS,CSD,CSW,JNLC,JNLS,PTC,PTR,SC,SSO,SSP,ACH",
             },
             timeout=30.0,
         )
@@ -208,14 +207,25 @@ def _backfill_snapshots(db: Session, client: TradingClient, account: AlpacaAccou
     equity data so the Performance tab can compute returns.
     """
     try:
-        resp = client.get("/v2/account/portfolio/history", data={
-            "period": "1A",
-            "timeframe": "1D",
-        })
+        import httpx
+        from app.security import decrypt_secret
 
-        timestamps = resp.get("timestamp", [])
-        equities = resp.get("equity", [])
-        profit_losses = resp.get("profit_loss", [])
+        api_secret = decrypt_secret(account.api_secret_enc)
+        resp = httpx.get(
+            f"{account.base_url}/v2/account/portfolio/history",
+            headers={
+                "APCA-API-KEY-ID": account.api_key,
+                "APCA-API-SECRET-KEY": api_secret,
+            },
+            params={"period": "1A", "timeframe": "1D"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        history = resp.json()
+
+        timestamps = history.get("timestamp", [])
+        equities = history.get("equity", [])
+        profit_losses = history.get("profit_loss", [])
 
         for i, ts in enumerate(timestamps):
             snap_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
