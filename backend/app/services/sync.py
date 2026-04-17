@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import select
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import GetOrdersRequest, GetPortfolioHistoryRequest
+from alpaca.trading.requests import GetOrdersRequest
 from alpaca.trading.enums import QueryOrderStatus
 
 from app.models.account import AlpacaAccount
@@ -38,9 +38,11 @@ def sync_account(db: Session, account: AlpacaAccount) -> None:
     """Full sync: positions, orders, activities, snapshot."""
     try:
         client = get_trading_client(account)
+        if account.last_sync_at is None:
+            _backfill_snapshots(db, client, account)
         _sync_positions(db, client, account)
         _sync_orders(db, client, account)
-        _sync_activities(db, client, account, days=7)
+        _sync_activities(db, client, account)
         _snapshot_equity(db, client, account)
         account.last_sync_at = datetime.now(timezone.utc)
         db.commit()
@@ -138,18 +140,38 @@ def _sync_orders(db: Session, client: TradingClient, account: AlpacaAccount) -> 
     db.flush()
 
 
-def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount, days: int = 7) -> None:
+def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount, days: int = 90) -> None:
+    """Fetch activities via raw REST (alpaca-py 0.26.0 lacks get_account_activities)."""
     try:
-        from alpaca.trading.requests import GetAccountActivitiesRequest
+        import httpx
+        from app.security import decrypt_secret
+
         since = datetime.now(timezone.utc) - timedelta(days=days)
-        req = GetAccountActivitiesRequest(after=since)
-        activities = client.get_account_activities(activity_filter=req)
+        api_secret = decrypt_secret(account.api_secret_enc)
+
+        resp = httpx.get(
+            f"{account.base_url}/v2/account/activities",
+            headers={
+                "APCA-API-KEY-ID": account.api_key,
+                "APCA-API-SECRET-KEY": api_secret,
+            },
+            params={
+                "after": since.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "activity_types": "DIV,DIVCGL,DIVCGS,DIVFEE,DIVFT,DIVNRA,DIVROC,DIVTW,DIVTXEX,FILL,ACATC,ACATS,CSD,CSW,JNLC,JNLS,PTC,PTR,SC,SSO,SSP,ACH",
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        activities = resp.json()
     except Exception as exc:
         logger.warning("Could not fetch activities (skipping): %s", exc)
         return
 
     for act in activities:
-        alpaca_id = str(act.id)
+        alpaca_id = str(act.get("id", ""))
+        if not alpaca_id:
+            continue
+
         existing = db.execute(
             select(Activity).where(Activity.alpaca_id == alpaca_id)
         ).scalar_one_or_none()
@@ -157,30 +179,73 @@ def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount,
             continue
 
         activity_date = None
-        if hasattr(act, "date") and act.date:
-            if isinstance(act.date, date):
-                activity_date = act.date
-            else:
-                try:
-                    activity_date = datetime.fromisoformat(str(act.date)).date()
-                except Exception:
-                    pass
-        elif hasattr(act, "transaction_time") and act.transaction_time:
-            activity_date = act.transaction_time.date()
+        raw_date = act.get("date") or act.get("transaction_time")
+        if raw_date:
+            try:
+                activity_date = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).date()
+            except Exception:
+                pass
 
         new_act = Activity(
             account_id=account.id,
             alpaca_id=alpaca_id,
-            activity_type=str(act.activity_type.value) if hasattr(act.activity_type, "value") else str(act.activity_type),
-            symbol=str(act.symbol) if hasattr(act, "symbol") and act.symbol else None,
-            qty=_safe_decimal(act.qty) if hasattr(act, "qty") else None,
-            price=_safe_decimal(act.price) if hasattr(act, "price") else None,
-            net_amount=_safe_decimal(act.net_amount) if hasattr(act, "net_amount") else None,
+            activity_type=str(act.get("activity_type", "")),
+            symbol=act.get("symbol"),
+            qty=_safe_decimal(act.get("qty")),
+            price=_safe_decimal(act.get("price")),
+            net_amount=_safe_decimal(act.get("net_amount")),
             date=activity_date,
-            raw={"id": alpaca_id, "type": str(act.activity_type)},
+            raw=act,
         )
         db.add(new_act)
     db.flush()
+
+
+def _backfill_snapshots(db: Session, client: TradingClient, account: AlpacaAccount) -> None:
+    """Backfill daily portfolio snapshots from Alpaca's portfolio history endpoint.
+
+    Called once per account (when last_sync_at is None) to populate historical
+    equity data so the Performance tab can compute returns.
+    """
+    try:
+        resp = client.get("/v2/account/portfolio/history", data={
+            "period": "1A",
+            "timeframe": "1D",
+        })
+
+        timestamps = resp.get("timestamp", [])
+        equities = resp.get("equity", [])
+        profit_losses = resp.get("profit_loss", [])
+
+        for i, ts in enumerate(timestamps):
+            snap_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+            equity_val = _safe_decimal(equities[i]) if i < len(equities) and equities[i] is not None else None
+            if equity_val is None:
+                continue
+
+            existing = db.execute(
+                select(PortfolioSnapshot).where(
+                    PortfolioSnapshot.account_id == account.id,
+                    PortfolioSnapshot.date == snap_date,
+                )
+            ).scalar_one_or_none()
+            if existing:
+                continue
+
+            pnl = _safe_decimal(profit_losses[i]) if i < len(profit_losses) and profit_losses[i] is not None else None
+
+            snap = PortfolioSnapshot(
+                account_id=account.id,
+                date=snap_date,
+                equity=equity_val,
+                pnl=pnl,
+            )
+            db.add(snap)
+
+        db.flush()
+        logger.info("Backfilled %d portfolio snapshots for account %s", len(timestamps), account.id)
+    except Exception as exc:
+        logger.warning("Could not backfill portfolio snapshots (skipping): %s", exc)
 
 
 def _snapshot_equity(db: Session, client: TradingClient, account: AlpacaAccount) -> None:
