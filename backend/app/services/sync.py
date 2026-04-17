@@ -347,83 +347,124 @@ def refresh_instruments(db: Session, account: AlpacaAccount) -> None:
     _backfill_sectors(db, [p.symbol for p in positions])
 
 
-def _classify_instrument_via_finnhub(
+def _classify_instrument(
     inst: Instrument,
     *,
     _time_module: object | None = None,
 ) -> bool:
-    """Try stock profile first; fall back to ETF endpoints if empty.
+    """Classify an instrument via yfinance (primary) with Finnhub stock fallback.
 
     Updates ``inst`` in place and returns ``True`` if any field was changed.
     Callers are responsible for committing the session.
     """
     import time as _default_time
-    from app.services.finnhub import (
-        get_company_profile,
-        get_etf_profile,
-        get_etf_sector_exposure,
-    )
+    from app.services.yfinance_client import get_ticker_info, derive_asset_class
+    from app.services.finnhub import get_company_profile
 
     _time = _time_module or _default_time
     changed = False
 
-    # --- 1. Try stock profile ---
+    # --- 1. Primary: yfinance ---
+    info = get_ticker_info(inst.symbol)
+
+    if info:
+        qt = (info.get("quoteType") or "").upper()
+        category = info.get("category")
+        long_name = info.get("longName")
+
+        if qt == "ETF":
+            inst.is_etf = True
+            if category:
+                inst.etf_category = category
+            inst.asset_class = derive_asset_class("ETF", category)
+            if long_name:
+                inst.name = long_name
+            # Derive sector from category keywords, or leave None
+            if category:
+                inst.sector = _sector_from_category(category)
+            if not inst.sector:
+                inst.sector = "Diversified"
+            inst.updated_at = datetime.now(timezone.utc)
+            changed = True
+            logger.info(
+                "Classified ETF %s via yfinance: category=%s, asset_class=%s, sector=%s",
+                inst.symbol, inst.etf_category, inst.asset_class, inst.sector,
+            )
+            return changed
+
+        # Equity (or other quoteType)
+        sector = info.get("sector")
+        industry = info.get("industry")
+        if sector or industry:
+            inst.is_etf = False
+            if sector:
+                inst.sector = sector
+            if industry:
+                inst.industry = industry
+            inst.asset_class = "Equity"
+            if long_name and not inst.name:
+                inst.name = long_name
+            inst.updated_at = datetime.now(timezone.utc)
+            changed = True
+            logger.info(
+                "Classified equity %s via yfinance: sector=%s, industry=%s",
+                inst.symbol, sector, industry,
+            )
+            return changed
+
+    # --- 2. Fallback: Finnhub stock/profile2 for non-ETF stocks ---
     profile = get_company_profile(inst.symbol)
-    _time.sleep(1.1)  # rate-limit
+    _time.sleep(1.1)  # rate-limit for Finnhub
 
     if profile:
         sector = profile.get("finnhubIndustry")
         if sector:
             inst.sector = sector
             inst.is_etf = False
+            inst.asset_class = "Equity"
             inst.updated_at = datetime.now(timezone.utc)
             changed = True
-            logger.info("Updated stock sector for %s -> %s", inst.symbol, sector)
-        return changed
-
-    # --- 2. Stock profile empty → try ETF profile ---
-    etf_profile = get_etf_profile(inst.symbol)
-    _time.sleep(1.1)
-
-    if etf_profile:
-        inst.is_etf = True
-        category = etf_profile.get("category")
-        if category:
-            inst.etf_category = category
-        asset_cls = etf_profile.get("assetClass")
-        if asset_cls:
-            inst.asset_class = asset_cls
-        inst.updated_at = datetime.now(timezone.utc)
-        changed = True
-        logger.info(
-            "Updated ETF profile for %s -> category=%s, asset_class=%s",
-            inst.symbol, category, asset_cls,
-        )
-
-    # --- 3. ETF sector exposure → derive dominant GICS sector ---
-    sectors = get_etf_sector_exposure(inst.symbol)
-    _time.sleep(1.1)
-
-    if sectors:
-        # Pick the sector with the highest exposure weight
-        top = max(sectors, key=lambda s: s.get("exposure", 0))
-        inst.sector = top.get("industry", "Diversified")
-        inst.updated_at = datetime.now(timezone.utc)
-        changed = True
-        logger.info(
-            "Updated ETF sector for %s -> %s (%.1f%%)",
-            inst.symbol, inst.sector, top.get("exposure", 0),
-        )
-    elif etf_profile and not inst.sector:
-        inst.sector = "Diversified"
-        inst.updated_at = datetime.now(timezone.utc)
-        changed = True
+            logger.info("Classified stock %s via Finnhub fallback: sector=%s", inst.symbol, sector)
 
     return changed
 
 
+# Keep old name as alias for backward compatibility in tests
+_classify_instrument_via_finnhub = _classify_instrument
+
+
+def _sector_from_category(category: str) -> str | None:
+    """Derive a broad sector label from an ETF category string."""
+    cat = category.lower()
+    if any(kw in cat for kw in ("technology", "tech")):
+        return "Technology"
+    if any(kw in cat for kw in ("healthcare", "health", "biotech", "pharma")):
+        return "Healthcare"
+    if any(kw in cat for kw in ("financial", "banking", "finance")):
+        return "Financials"
+    if any(kw in cat for kw in ("energy", "oil", "gas", "mlp", "pipeline")):
+        return "Energy"
+    if any(kw in cat for kw in ("real estate", "reit")):
+        return "Real Estate"
+    if any(kw in cat for kw in ("treasury", "bond", "fixed income", "credit", "government")):
+        return "Fixed Income"
+    if any(kw in cat for kw in ("gold", "silver", "commodit", "metal", "natural resource")):
+        return "Commodities"
+    if any(kw in cat for kw in ("crypto", "digital", "bitcoin")):
+        return "Crypto"
+    if any(kw in cat for kw in ("utility", "utilities")):
+        return "Utilities"
+    if any(kw in cat for kw in ("consumer",)):
+        return "Consumer"
+    if any(kw in cat for kw in ("industrial",)):
+        return "Industrials"
+    if any(kw in cat for kw in ("communication",)):
+        return "Communication Services"
+    return None
+
+
 def _backfill_sectors(db: Session, symbols: list[str]) -> None:
-    """Classify instruments via Finnhub (stock profile first, then ETF endpoints)."""
+    """Classify instruments via yfinance (primary) with Finnhub stock fallback."""
     unique_symbols = sorted(set(symbols))
     updated = 0
     for sym in unique_symbols:
@@ -432,9 +473,9 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
             continue
         # Skip if sector already populated (avoids unnecessary API calls)
         if inst.sector:
-            logger.debug("Sector already set for %s, skipping Finnhub call", sym)
+            logger.debug("Sector already set for %s, skipping classification", sym)
             continue
-        if _classify_instrument_via_finnhub(inst):
+        if _classify_instrument(inst):
             updated += 1
 
     if updated:
@@ -445,7 +486,7 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
 def backfill_all_sectors(db: Session) -> int:
     """Backfill sectors for every instrument row — used by CLI / admin tasks.
 
-    Uses stock profile first, then falls back to ETF endpoints.
+    Uses yfinance first, then falls back to Finnhub stock/profile2.
     Returns the number of instruments updated.
     """
     instruments = db.execute(select(Instrument)).scalars().all()
@@ -455,11 +496,11 @@ def backfill_all_sectors(db: Session) -> int:
         if inst.sector:
             logger.debug("[%d/%d] %s already has sector=%s", idx, total, inst.symbol, inst.sector)
             continue
-        if _classify_instrument_via_finnhub(inst):
+        if _classify_instrument(inst):
             updated += 1
             logger.info("[%d/%d] %s -> sector=%s, etf=%s", idx, total, inst.symbol, inst.sector, inst.is_etf)
         else:
-            logger.info("[%d/%d] No Finnhub data for %s", idx, total, inst.symbol)
+            logger.info("[%d/%d] No data for %s", idx, total, inst.symbol)
 
     if updated:
         db.commit()
