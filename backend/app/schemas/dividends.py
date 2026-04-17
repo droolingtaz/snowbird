@@ -40,3 +40,39 @@ class DividendBySymbol(BaseModel):
     frequency: Optional[str] = None
     projected_annual: Optional[float] = None
     current_qty: float
+
+
+# ── Dividend chart endpoints ─────────────────────────────────────────────────
+
+class FuturePaymentMonth(BaseModel):
+    month: str  # YYYY-MM
+    confirmed: float
+    estimated: float
+    total: float
+
+
+class FuturePaymentsResponse(BaseModel):
+    months: List[FuturePaymentMonth]
+
+
+class ReceivedMonth(BaseModel):
+    month: str  # YYYY-MM
+    total: float
+
+
+class ReceivedMonthlyResponse(BaseModel):
+    months: List[ReceivedMonth]
+
+
+class GrowthYearMonth(BaseModel):
+    month: int
+    total: float
+
+
+class GrowthYear(BaseModel):
+    year: int
+    months: List[GrowthYearMonth]
+
+
+class GrowthYoYResponse(BaseModel):
+    years: List[GrowthYear]

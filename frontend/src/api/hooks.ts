@@ -198,6 +198,42 @@ export function useDividendsBySymbol() {
   });
 }
 
+export function useFuturePayments(months: number = 12) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["dividends", "future-payments", accountId, months],
+    queryFn: () =>
+      api
+        .get("/dividends/future-payments", { params: { account_id: accountId, months } })
+        .then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useReceivedMonthly(months: number = 12) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["dividends", "received-monthly", accountId, months],
+    queryFn: () =>
+      api
+        .get("/dividends/received-monthly", { params: { account_id: accountId, months } })
+        .then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useGrowthYoY(years: number = 3) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["dividends", "growth-yoy", accountId, years],
+    queryFn: () =>
+      api
+        .get("/dividends/growth-yoy", { params: { account_id: accountId, years } })
+        .then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 export function usePerformance(period: string = "1Y") {
