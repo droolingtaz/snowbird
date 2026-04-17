@@ -785,6 +785,156 @@ def test_allocation_groups_by_asset_class(client_with_data):
     assert len(data["items"]) > 0
 
 
+# ── yfinance throttle + retry tests ────────────────────────────────────────
+
+def test_get_ticker_info_retries_on_429_then_succeeds():
+    """get_ticker_info retries on 429 errors and returns data on eventual success."""
+    from app.services.yfinance_client import get_ticker_info
+
+    expected = {
+        "quoteType": "ETF",
+        "category": "Derivative Income",
+        "fundFamily": "Neos",
+        "longName": "NEOS S&P 500 High Income ETF",
+        "sector": None,
+        "industry": None,
+    }
+
+    call_count = 0
+
+    def _fake_fetch(symbol):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            raise Exception("HTTPError 429 Too Many Requests")
+        return expected
+
+    sleep_calls = []
+
+    with patch("app.services.yfinance_client._cache_get", return_value=None), \
+         patch("app.services.yfinance_client._cache_set"):
+        result = get_ticker_info(
+            "SPYI",
+            _sleep_fn=lambda s: sleep_calls.append(s),
+            _fetch_fn=_fake_fetch,
+        )
+
+    assert result == expected
+    assert call_count == 3  # 2 failures + 1 success
+    # First call is the per-call throttle sleep, then 2 backoff sleeps
+    assert len(sleep_calls) == 3  # throttle + 2 retries
+
+
+def test_get_ticker_info_gives_up_after_max_retries():
+    """get_ticker_info returns None after exhausting retries on persistent 429."""
+    from app.services.yfinance_client import get_ticker_info
+
+    call_count = 0
+
+    def _fake_fetch(symbol):
+        nonlocal call_count
+        call_count += 1
+        raise Exception("429 Too Many Requests")
+
+    with patch("app.services.yfinance_client._cache_get", return_value=None):
+        result = get_ticker_info(
+            "FAIL",
+            _sleep_fn=lambda s: None,
+            _fetch_fn=_fake_fetch,
+        )
+
+    assert result is None
+    assert call_count == 5  # YFINANCE_MAX_RETRIES default
+
+
+def test_get_ticker_info_no_retry_on_non_retryable():
+    """get_ticker_info does not retry on non-retryable errors (e.g. KeyError)."""
+    from app.services.yfinance_client import get_ticker_info
+
+    call_count = 0
+
+    def _fake_fetch(symbol):
+        nonlocal call_count
+        call_count += 1
+        raise KeyError("some_key")
+
+    with patch("app.services.yfinance_client._cache_get", return_value=None):
+        result = get_ticker_info(
+            "FAIL",
+            _sleep_fn=lambda s: None,
+            _fetch_fn=_fake_fetch,
+        )
+
+    assert result is None
+    assert call_count == 1  # no retries
+
+
+def test_get_ticker_info_throttle_sleep():
+    """get_ticker_info calls sleep for per-call throttle before fetching."""
+    from app.services.yfinance_client import get_ticker_info
+
+    expected = {"quoteType": "ETF", "category": "Test", "fundFamily": None,
+                "longName": None, "sector": None, "industry": None}
+
+    sleep_calls = []
+
+    with patch("app.services.yfinance_client._cache_get", return_value=None), \
+         patch("app.services.yfinance_client._cache_set"):
+        result = get_ticker_info(
+            "TEST",
+            _sleep_fn=lambda s: sleep_calls.append(s),
+            _fetch_fn=lambda sym: expected,
+        )
+
+    assert result == expected
+    # At least the throttle sleep should have been called
+    assert len(sleep_calls) >= 1
+    # First sleep should be the per-call throttle (default 7s)
+    from app.services.yfinance_client import YFINANCE_PER_CALL_SLEEP
+    assert sleep_calls[0] == YFINANCE_PER_CALL_SLEEP
+
+
+def test_is_retryable_detects_429():
+    """_is_retryable returns True for 429 and timeout errors."""
+    from app.services.yfinance_client import _is_retryable
+
+    assert _is_retryable(Exception("HTTPError 429 Too Many Requests")) is True
+    assert _is_retryable(Exception("rate limit exceeded")) is True
+    assert _is_retryable(Exception("Connection timed out")) is True
+    assert _is_retryable(Exception("ConnectionError: reset")) is True
+    assert _is_retryable(KeyError("some_key")) is False
+    assert _is_retryable(ValueError("bad value")) is False
+
+
+# ── backfill_all_sectors resilience ────────────────────────────────────────
+
+def test_backfill_all_sectors_continues_on_symbol_failure(db):
+    """backfill_all_sectors logs warning and continues when one symbol raises."""
+    from app.services.sync import backfill_all_sectors
+
+    db.add(Instrument(symbol="FAIL", name="Failure"))
+    db.add(Instrument(symbol="AAPL", name="Apple"))
+    db.commit()
+
+    call_count = 0
+
+    def _mock_get_ticker_info(symbol):
+        nonlocal call_count
+        call_count += 1
+        if symbol == "FAIL":
+            raise RuntimeError("simulated crash")
+        return SAMPLE_YFINANCE_EQUITY
+
+    with patch("app.services.yfinance_client.get_ticker_info", side_effect=_mock_get_ticker_info), \
+         patch("app.services.finnhub.get_company_profile", return_value=None), \
+         patch("time.sleep"):
+        count = backfill_all_sectors(db)
+
+    # AAPL should have been classified despite FAIL raising
+    assert count == 1
+    assert db.get(Instrument, "AAPL").sector == "Technology"
+
+
 # ── Backward compat alias ───────────────────────────────────────────────────
 
 def test_classify_instrument_via_finnhub_alias_exists():
