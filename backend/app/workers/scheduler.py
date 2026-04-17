@@ -38,7 +38,7 @@ def fast_sync_job() -> None:
 
 
 def activity_sync_job() -> None:
-    """Every 5 minutes: pull last 7 days of activities."""
+    """Every 5 minutes: pull recent activities (dynamic lookback)."""
     _run_sync(full=False, activities_only=True)
 
 
@@ -78,7 +78,7 @@ def _run_sync(full: bool = True, activities_only: bool = False) -> None:
             try:
                 if activities_only:
                     client = get_trading_client(acct)
-                    _sync_activities(db, client, acct, days=7)
+                    _sync_activities(db, client, acct)
                     db.commit()
                 elif full:
                     sync_account(db, acct)

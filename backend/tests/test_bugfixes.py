@@ -139,7 +139,7 @@ class TestSyncActivitiesIsolation:
 
         with patch("builtins.__import__", side_effect=fake_import):
             # Should not raise — the try/except inside _sync_activities catches it
-            _sync_activities(mock_db, mock_client, mock_account, days=7)
+            _sync_activities(mock_db, mock_client, mock_account)
 
 
 # ---------------------------------------------------------------------------
