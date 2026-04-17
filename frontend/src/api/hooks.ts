@@ -198,6 +198,42 @@ export function useDividendsBySymbol() {
   });
 }
 
+export function useFuturePayments(months: number = 12) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["dividends", "future-payments", accountId, months],
+    queryFn: () =>
+      api
+        .get("/dividends/future-payments", { params: { account_id: accountId, months } })
+        .then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useReceivedMonthly(months: number = 12) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["dividends", "received-monthly", accountId, months],
+    queryFn: () =>
+      api
+        .get("/dividends/received-monthly", { params: { account_id: accountId, months } })
+        .then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useGrowthYoY(years: number = 3) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["dividends", "growth-yoy", accountId, years],
+    queryFn: () =>
+      api
+        .get("/dividends/growth-yoy", { params: { account_id: accountId, years } })
+        .then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 export function usePerformance(period: string = "1Y") {
@@ -231,6 +267,37 @@ export function useMonthlyReturns() {
     queryFn: () =>
       api.get("/analytics/monthly", { params: { account_id: accountId } }).then((r) => r.data),
     enabled: !!accountId,
+  });
+}
+
+export function useIrr(period: string = "1Y") {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["analytics", "irr", accountId, period],
+    queryFn: () =>
+      api.get("/analytics/irr", { params: { account_id: accountId, period } }).then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function usePassiveIncome() {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["analytics", "passive-income", accountId],
+    queryFn: () =>
+      api.get("/analytics/passive-income", { params: { account_id: accountId } }).then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useMovers(limit: number = 5) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["analytics", "movers", accountId, limit],
+    queryFn: () =>
+      api.get("/analytics/movers", { params: { account_id: accountId, limit } }).then((r) => r.data),
+    enabled: !!accountId,
+    refetchInterval: 30_000,
   });
 }
 

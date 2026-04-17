@@ -4,6 +4,9 @@ import {
 } from "../api/hooks";
 import Card from "../components/Card";
 import DividendCalendar from "../components/DividendCalendar";
+import FuturePaymentsChart from "../components/FuturePaymentsChart";
+import ReceivedMonthlyChart from "../components/ReceivedMonthlyChart";
+import GrowthYoYChart from "../components/GrowthYoYChart";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { format, addDays } from "date-fns";
 
@@ -84,6 +87,14 @@ export default function Dividends() {
           </ResponsiveContainer>
         </Card>
       )}
+
+      {/* Dividend charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <FuturePaymentsChart />
+        <ReceivedMonthlyChart />
+      </div>
+
+      <GrowthYoYChart />
 
       {/* Calendar */}
       <Card title="Dividend Calendar (next 12 months)">
