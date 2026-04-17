@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Prune snowbird-backend
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v3.0.1
         with:
           account: user
           token: ${{ secrets.GHCR_CLEANUP_TOKEN }}
@@ -22,7 +22,7 @@ jobs:
           keep-n-most-recent: 10
 
       - name: Prune snowbird-frontend
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v3.0.1
         with:
           account: user
           token: ${{ secrets.GHCR_CLEANUP_TOKEN }}
