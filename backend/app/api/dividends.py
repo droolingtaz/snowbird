@@ -5,11 +5,13 @@ from typing import List, Optional
 from app.deps import CurrentUser, DbSession
 from app.models.account import AlpacaAccount
 from app.schemas.dividends import (
-    DividendHistoryItem, DividendForecast, DividendCalendarItem, DividendBySymbol
+    DividendHistoryItem, DividendForecast, DividendCalendarItem, DividendBySymbol,
+    FuturePaymentsResponse, ReceivedMonthlyResponse, GrowthYoYResponse,
 )
 from app.services.dividends import (
     get_dividend_history, get_dividend_forecast,
     get_dividend_calendar, get_dividends_by_symbol,
+    get_future_payments, get_received_monthly, get_growth_yoy,
 )
 
 router = APIRouter(prefix="/dividends", tags=["dividends"])
@@ -57,3 +59,33 @@ def dividends_by_symbol(
     db: DbSession = None,
 ):
     return get_dividends_by_symbol(db, account_id)
+
+
+@router.get("/future-payments", response_model=FuturePaymentsResponse)
+def future_payments(
+    account_id: int,
+    months: int = 12,
+    current_user: CurrentUser = None,
+    db: DbSession = None,
+):
+    return get_future_payments(db, account_id, months)
+
+
+@router.get("/received-monthly", response_model=ReceivedMonthlyResponse)
+def received_monthly(
+    account_id: int,
+    months: int = 12,
+    current_user: CurrentUser = None,
+    db: DbSession = None,
+):
+    return get_received_monthly(db, account_id, months)
+
+
+@router.get("/growth-yoy", response_model=GrowthYoYResponse)
+def growth_yoy(
+    account_id: int,
+    years: int = 3,
+    current_user: CurrentUser = None,
+    db: DbSession = None,
+):
+    return get_growth_yoy(db, account_id, years)

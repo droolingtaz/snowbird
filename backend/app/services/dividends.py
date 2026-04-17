@@ -6,20 +6,25 @@ from typing import List, Optional
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, extract
 
 from app.models.activity import Activity
 from app.models.position import Position
 from app.schemas.dividends import (
     DividendHistoryItem, DividendBySymbol, DividendForecast,
     DividendForecastMonth, DividendCalendarItem,
+    FuturePaymentMonth, FuturePaymentsResponse,
+    ReceivedMonth, ReceivedMonthlyResponse,
+    GrowthYearMonth, GrowthYear, GrowthYoYResponse,
 )
+
+DIV_TYPES = ["DIV", "DIVCGL", "DIVCGS", "DIVNRA", "DIVROC", "DIVTXEX"]
 
 
 def get_dividend_history(db: Session, account_id: int, year: Optional[int] = None) -> List[DividendHistoryItem]:
     query = select(Activity).where(
         Activity.account_id == account_id,
-        Activity.activity_type.in_(["DIV", "DIVCGL", "DIVCGS", "DIVNRA", "DIVTXEX"]),
+        Activity.activity_type.in_(DIV_TYPES),
     )
     if year:
         from sqlalchemy import extract
@@ -44,7 +49,7 @@ def get_dividends_by_symbol(db: Session, account_id: int) -> List[DividendBySymb
     activities = db.execute(
         select(Activity).where(
             Activity.account_id == account_id,
-            Activity.activity_type.in_(["DIV", "DIVCGL", "DIVCGS", "DIVNRA", "DIVTXEX"]),
+            Activity.activity_type.in_(DIV_TYPES),
         )
     ).scalars().all()
 
@@ -209,3 +214,114 @@ def get_dividend_calendar(db: Session, account_id: int, from_date: str, to_date:
             current += timedelta(days=period_days)
 
     return sorted(results, key=lambda x: x.pay_date or "")
+
+
+# ── Chart endpoints ──────────────────────────────────────────────────────────
+
+def get_future_payments(db: Session, account_id: int, months: int = 12) -> FuturePaymentsResponse:
+    """Aggregate forecasted dividend payments by month for the next N months.
+
+    Uses the existing forecast logic. Payments with an ex-date already in the
+    calendar are "confirmed"; the rest are "estimated".
+    """
+    forecast = get_dividend_forecast(db, account_id)
+
+    today = date.today()
+    # Calendar items with an ex_date in the past are "confirmed"
+    calendar = get_dividend_calendar(
+        db, account_id,
+        from_date=str(today),
+        to_date=str(today + timedelta(days=months * 31)),
+    )
+    confirmed_keys: set[tuple[str, str]] = set()
+    for item in calendar:
+        if item.ex_date:
+            try:
+                ex = date.fromisoformat(item.ex_date)
+                if ex <= today:
+                    pay_month = item.pay_date[:7] if item.pay_date else None
+                    if pay_month:
+                        confirmed_keys.add((item.symbol, pay_month))
+            except Exception:
+                pass
+
+    # Build month buckets from forecast monthly data
+    monthly_confirmed: dict[str, float] = defaultdict(float)
+    monthly_estimated: dict[str, float] = defaultdict(float)
+
+    for fm in forecast.monthly:
+        for sym in fm.symbols:
+            per_sym = fm.projected_income / len(fm.symbols) if fm.symbols else 0
+            if (sym, fm.month) in confirmed_keys:
+                monthly_confirmed[fm.month] += per_sym
+            else:
+                monthly_estimated[fm.month] += per_sym
+
+    # Collect all months and sort
+    all_months = sorted(set(monthly_confirmed.keys()) | set(monthly_estimated.keys()))[:months]
+
+    result_months = []
+    for m in all_months:
+        c = round(monthly_confirmed.get(m, 0.0), 2)
+        e = round(monthly_estimated.get(m, 0.0), 2)
+        result_months.append(FuturePaymentMonth(
+            month=m, confirmed=c, estimated=e, total=round(c + e, 2),
+        ))
+
+    return FuturePaymentsResponse(months=result_months)
+
+
+def get_received_monthly(db: Session, account_id: int, months: int = 12) -> ReceivedMonthlyResponse:
+    """Aggregate actual dividend receipts by month for trailing N months."""
+    cutoff = date.today() - timedelta(days=months * 31)
+
+    activities = db.execute(
+        select(Activity).where(
+            Activity.account_id == account_id,
+            Activity.activity_type.in_(DIV_TYPES),
+            Activity.date >= cutoff,
+        ).order_by(Activity.date)
+    ).scalars().all()
+
+    by_month: dict[str, float] = defaultdict(float)
+    for act in activities:
+        if act.date and act.net_amount:
+            key = f"{act.date.year}-{act.date.month:02d}"
+            by_month[key] += float(act.net_amount)
+
+    result_months = [
+        ReceivedMonth(month=k, total=round(v, 2))
+        for k, v in sorted(by_month.items())
+    ]
+    return ReceivedMonthlyResponse(months=result_months)
+
+
+def get_growth_yoy(db: Session, account_id: int, years: int = 3) -> GrowthYoYResponse:
+    """Monthly dividend totals for the current year and N-1 prior years."""
+    today = date.today()
+    start_year = today.year - (years - 1)
+    cutoff = date(start_year, 1, 1)
+
+    activities = db.execute(
+        select(Activity).where(
+            Activity.account_id == account_id,
+            Activity.activity_type.in_(DIV_TYPES),
+            Activity.date >= cutoff,
+        ).order_by(Activity.date)
+    ).scalars().all()
+
+    # year -> month -> total
+    grid: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+    for act in activities:
+        if act.date and act.net_amount:
+            grid[act.date.year][act.date.month] += float(act.net_amount)
+
+    result_years = []
+    for yr in range(start_year, today.year + 1):
+        max_month = today.month if yr == today.year else 12
+        months = []
+        for m in range(1, max_month + 1):
+            months.append(GrowthYearMonth(month=m, total=round(grid[yr].get(m, 0.0), 2)))
+        result_years.append(GrowthYear(year=yr, months=months))
+
+    return GrowthYoYResponse(years=result_years)
