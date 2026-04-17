@@ -114,6 +114,7 @@ export default function Dashboard() {
             >
               <option value="sector">Sector</option>
               <option value="asset_class">Asset Class</option>
+              <option value="etf_category">ETF Category</option>
               <option value="bucket">Bucket</option>
             </select>
           }

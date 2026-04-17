@@ -162,7 +162,10 @@ def portfolio_allocation(
             label = (inst.sector if inst and inst.sector else "Unknown")
         elif by == "asset_class":
             inst = db.get(Instrument, pos.symbol)
-            label = (inst.asset_class if inst and inst.asset_class else "us_equity")
+            label = (inst.asset_class if inst and inst.asset_class else "Unknown")
+        elif by == "etf_category":
+            inst = db.get(Instrument, pos.symbol)
+            label = (inst.etf_category if inst and inst.etf_category else "Unknown")
         elif by == "bucket":
             label = buckets_by_symbol.get(pos.symbol, "Unassigned")
         else:

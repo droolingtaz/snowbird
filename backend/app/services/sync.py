@@ -347,11 +347,83 @@ def refresh_instruments(db: Session, account: AlpacaAccount) -> None:
     _backfill_sectors(db, [p.symbol for p in positions])
 
 
-def _backfill_sectors(db: Session, symbols: list[str]) -> None:
-    """Fetch company profiles from Finnhub and update sector/industry on instruments."""
-    import time as _time
-    from app.services.finnhub import get_company_profile
+def _classify_instrument_via_finnhub(
+    inst: Instrument,
+    *,
+    _time_module: object | None = None,
+) -> bool:
+    """Try stock profile first; fall back to ETF endpoints if empty.
 
+    Updates ``inst`` in place and returns ``True`` if any field was changed.
+    Callers are responsible for committing the session.
+    """
+    import time as _default_time
+    from app.services.finnhub import (
+        get_company_profile,
+        get_etf_profile,
+        get_etf_sector_exposure,
+    )
+
+    _time = _time_module or _default_time
+    changed = False
+
+    # --- 1. Try stock profile ---
+    profile = get_company_profile(inst.symbol)
+    _time.sleep(1.1)  # rate-limit
+
+    if profile:
+        sector = profile.get("finnhubIndustry")
+        if sector:
+            inst.sector = sector
+            inst.is_etf = False
+            inst.updated_at = datetime.now(timezone.utc)
+            changed = True
+            logger.info("Updated stock sector for %s -> %s", inst.symbol, sector)
+        return changed
+
+    # --- 2. Stock profile empty → try ETF profile ---
+    etf_profile = get_etf_profile(inst.symbol)
+    _time.sleep(1.1)
+
+    if etf_profile:
+        inst.is_etf = True
+        category = etf_profile.get("category")
+        if category:
+            inst.etf_category = category
+        asset_cls = etf_profile.get("assetClass")
+        if asset_cls:
+            inst.asset_class = asset_cls
+        inst.updated_at = datetime.now(timezone.utc)
+        changed = True
+        logger.info(
+            "Updated ETF profile for %s -> category=%s, asset_class=%s",
+            inst.symbol, category, asset_cls,
+        )
+
+    # --- 3. ETF sector exposure → derive dominant GICS sector ---
+    sectors = get_etf_sector_exposure(inst.symbol)
+    _time.sleep(1.1)
+
+    if sectors:
+        # Pick the sector with the highest exposure weight
+        top = max(sectors, key=lambda s: s.get("exposure", 0))
+        inst.sector = top.get("industry", "Diversified")
+        inst.updated_at = datetime.now(timezone.utc)
+        changed = True
+        logger.info(
+            "Updated ETF sector for %s -> %s (%.1f%%)",
+            inst.symbol, inst.sector, top.get("exposure", 0),
+        )
+    elif etf_profile and not inst.sector:
+        inst.sector = "Diversified"
+        inst.updated_at = datetime.now(timezone.utc)
+        changed = True
+
+    return changed
+
+
+def _backfill_sectors(db: Session, symbols: list[str]) -> None:
+    """Classify instruments via Finnhub (stock profile first, then ETF endpoints)."""
     unique_symbols = sorted(set(symbols))
     updated = 0
     for sym in unique_symbols:
@@ -362,18 +434,8 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
         if inst.sector:
             logger.debug("Sector already set for %s, skipping Finnhub call", sym)
             continue
-        profile = get_company_profile(sym)
-        if profile is None:
-            logger.info("No Finnhub profile for %s", sym)
-            continue
-        sector = profile.get("finnhubIndustry")
-        if sector:
-            inst.sector = sector
-            inst.updated_at = datetime.now(timezone.utc)
+        if _classify_instrument_via_finnhub(inst):
             updated += 1
-            logger.info("Updated sector for %s -> %s", sym, sector)
-        # Respect Finnhub free-tier rate limit (60 calls/min)
-        _time.sleep(1.1)
 
     if updated:
         db.commit()
@@ -383,11 +445,9 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
 def backfill_all_sectors(db: Session) -> int:
     """Backfill sectors for every instrument row — used by CLI / admin tasks.
 
+    Uses stock profile first, then falls back to ETF endpoints.
     Returns the number of instruments updated.
     """
-    import time as _time
-    from app.services.finnhub import get_company_profile
-
     instruments = db.execute(select(Instrument)).scalars().all()
     updated = 0
     total = len(instruments)
@@ -395,18 +455,11 @@ def backfill_all_sectors(db: Session) -> int:
         if inst.sector:
             logger.debug("[%d/%d] %s already has sector=%s", idx, total, inst.symbol, inst.sector)
             continue
-        profile = get_company_profile(inst.symbol)
-        if profile is None:
-            logger.info("[%d/%d] No Finnhub profile for %s", idx, total, inst.symbol)
-            _time.sleep(1.1)
-            continue
-        sector = profile.get("finnhubIndustry")
-        if sector:
-            inst.sector = sector
-            inst.updated_at = datetime.now(timezone.utc)
+        if _classify_instrument_via_finnhub(inst):
             updated += 1
-            logger.info("[%d/%d] %s -> %s", idx, total, inst.symbol, sector)
-        _time.sleep(1.1)
+            logger.info("[%d/%d] %s -> sector=%s, etf=%s", idx, total, inst.symbol, inst.sector, inst.is_etf)
+        else:
+            logger.info("[%d/%d] No Finnhub data for %s", idx, total, inst.symbol)
 
     if updated:
         db.commit()
