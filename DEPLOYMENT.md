@@ -137,3 +137,66 @@ Last 5 successful tags are kept in `/opt/snowbird/.deploy_history`.
 - [ ] Point `POSTGRES_PASSWORD` to something strong and back up `pgdata`
 - [ ] Enable GitHub branch protection on `main` so tests must pass before merge
 - [ ] (Optional) Add Dependabot + weekly security scans on the Dockerfiles
+
+## Part 7 — Backups
+
+Nightly compressed Postgres dumps are written locally to the VM.
+No cloud storage is required; backups never leave the host.
+
+### Backup details
+
+| Item | Value |
+|---|---|
+| Location | `/var/backups/snowbird/` |
+| Filename format | `snowbird-YYYY-MM-DD-HHMM.sql.gz` |
+| Schedule | Daily at **03:30** local time |
+| Retention | **14 days** (older files pruned automatically) |
+| Log | `/var/log/snowbird-backup.log` |
+
+### One-time install (run on the VM as root)
+
+```bash
+# Copy the script into the deployment directory
+sudo cp /path/to/repo/scripts/pg_backup.sh /opt/snowbird/scripts/
+sudo chmod +x /opt/snowbird/scripts/pg_backup.sh
+
+# Install systemd units
+sudo cp scripts/systemd/snowbird-backup.service /etc/systemd/system/
+sudo cp scripts/systemd/snowbird-backup.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now snowbird-backup.timer
+```
+
+### Check status
+
+```bash
+# Is the timer active and when does it next fire?
+systemctl status snowbird-backup.timer
+
+# View recent backup job output
+journalctl -u snowbird-backup.service --since yesterday
+```
+
+### Run a backup manually
+
+```bash
+sudo systemctl start snowbird-backup.service
+# Then tail the log for immediate feedback:
+tail -f /var/log/snowbird-backup.log
+```
+
+### Restore from a backup
+
+```bash
+# List available backups
+ls -lh /var/backups/snowbird/
+
+# Restore (replace the filename with the one you want)
+gunzip -c /var/backups/snowbird/snowbird-YYYY-MM-DD-HHMM.sql.gz \
+  | docker compose -f /opt/snowbird/docker-compose.prod.yml exec -T db \
+      psql -U snowbird -d snowbird
+```
+
+> **Warning:** restoring overwrites the current database. Stop the backend
+> first (`docker compose -f /opt/snowbird/docker-compose.prod.yml stop backend`)
+> and redeploy or restart it afterwards.
