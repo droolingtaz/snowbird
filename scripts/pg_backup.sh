@@ -35,8 +35,9 @@ log "Dumping database '${DB_NAME}' to ${BACKUP_FILE} ..."
 set +e
 docker compose -f "$COMPOSE_FILE" exec -T db \
     pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "$BACKUP_FILE"
-PG_EXIT=${PIPESTATUS[0]}
-GZIP_EXIT=${PIPESTATUS[1]}
+pipe_status=("${PIPESTATUS[@]}")
+PG_EXIT="${pipe_status[0]}"
+GZIP_EXIT="${pipe_status[1]}"
 set -e
 
 if [[ $PG_EXIT -ne 0 ]]; then
