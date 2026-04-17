@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import computed_field
 
@@ -23,6 +25,9 @@ class Settings(BaseSettings):
     # Misc
     RISK_FREE_RATE: float = 0.045
     ENVIRONMENT: str = "development"
+
+    # Finnhub (optional - earnings calendar)
+    FINNHUB_API_KEY: Optional[str] = None
 
     @computed_field
     @property

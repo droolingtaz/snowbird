@@ -400,3 +400,50 @@ export function useMarketClock() {
     refetchInterval: 60_000,
   });
 }
+
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+export function useUpcomingEvents(days: number = 30) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["events", "upcoming", accountId, days],
+    queryFn: () =>
+      api.get("/events/upcoming", { params: { account_id: accountId, days } }).then((r) => r.data),
+    enabled: !!accountId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+// ── Goals ─────────────────────────────────────────────────────────────────────
+
+export function useGoal() {
+  return useQuery({
+    queryKey: ["goals"],
+    queryFn: () => api.get("/goals").then((r) => r.data),
+    retry: false,
+  });
+}
+
+export function useUpsertGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { target_annual_income: number; assumed_annual_growth_pct?: number; assumed_monthly_contribution?: number }) =>
+      api.put("/goals", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["goals"] });
+      qc.invalidateQueries({ queryKey: ["goals", "projection"] });
+    },
+  });
+}
+
+export function useGoalProjection() {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["goals", "projection", accountId],
+    queryFn: () =>
+      api.get("/goals/projection", { params: { account_id: accountId } }).then((r) => r.data),
+    enabled: !!accountId,
+    retry: false,
+  });
+}
