@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed demo user: demo@local / demo12345."""
+"""Seed demo user: demo@example.com / demo12345."""
 import sys
 import os
 
@@ -15,7 +15,7 @@ from app.security import hash_password
 def seed() -> None:
     db = SessionLocal()
     try:
-        existing = db.execute(select(User).where(User.email == "demo@local")).scalar_one_or_none()
+        existing = db.execute(select(User).where(User.email == "demo@example.com")).scalar_one_or_none()
         if existing:
             print("Demo user already exists, skipping.")
             return
@@ -26,7 +26,7 @@ def seed() -> None:
         )
         db.add(demo)
         db.commit()
-        print("Created demo user: demo@local / demo12345")
+        print("Created demo user: demo@example.com / demo12345")
     finally:
         db.close()
 

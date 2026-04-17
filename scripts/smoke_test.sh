@@ -12,7 +12,7 @@
 set -euo pipefail
 
 BACKEND="${SMOKE_BACKEND_URL:-http://localhost:8080}"
-DEMO_EMAIL="${SMOKE_DEMO_EMAIL:-demo@local}"
+DEMO_EMAIL="${SMOKE_DEMO_EMAIL:-demo@example.com}"
 DEMO_PASSWORD="${SMOKE_DEMO_PASSWORD:-demo12345}"
 # Optional — set these to enable the full Alpaca paper trading smoke test
 ALPACA_KEY="${SMOKE_ALPACA_KEY:-}"
