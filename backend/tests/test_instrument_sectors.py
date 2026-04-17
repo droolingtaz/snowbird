@@ -735,7 +735,7 @@ def test_classify_etf_diversified_when_no_category_match(db):
 # ── backfill_all_sectors with ETFs ───────────────────────────────────────────
 
 def test_backfill_all_sectors_classifies_etf(db):
-    """backfill_all_sectors handles ETFs via yfinance."""
+    """backfill_all_sectors handles ETFs via curated map (SPYI is curated)."""
     from app.services.sync import backfill_all_sectors
 
     db.add(Instrument(symbol="SPYI", name="NEOS S&P 500 High Income ETF"))
@@ -749,7 +749,7 @@ def test_backfill_all_sectors_classifies_etf(db):
     assert count == 1  # only SPYI, AAPL skipped (has sector)
     spyi = db.get(Instrument, "SPYI")
     assert spyi.is_etf is True
-    assert spyi.etf_category == "Derivative Income"
+    assert spyi.etf_category == "S&P 500 / Covered Call"  # from curated map
 
 
 # ── Allocation endpoint with ETF category ────────────────────────────────────
@@ -941,3 +941,62 @@ def test_classify_instrument_via_finnhub_alias_exists():
     """_classify_instrument_via_finnhub alias still works for backward compat."""
     from app.services.sync import _classify_instrument_via_finnhub, _classify_instrument
     assert _classify_instrument_via_finnhub is _classify_instrument
+
+
+# ── Curated ETF classification map ─────────────────────────────────────────
+
+def test_curated_map_classifies_without_yfinance(db):
+    """Symbol in curated JSON map gets all four fields without calling yfinance."""
+    from app.services.sync import backfill_all_sectors
+
+    db.add(Instrument(symbol="AIPI", name="Unknown ETF"))
+    db.commit()
+
+    with patch("app.services.yfinance_client.get_ticker_info") as mock_yf, \
+         patch("app.services.finnhub.get_company_profile") as mock_fh, \
+         patch("time.sleep"):
+        count = backfill_all_sectors(db)
+
+    # yfinance and Finnhub must NOT be called for a curated symbol
+    mock_yf.assert_not_called()
+    mock_fh.assert_not_called()
+
+    assert count == 1
+    inst = db.get(Instrument, "AIPI")
+    assert inst.is_etf is True
+    assert inst.asset_class == "Equity"
+    assert inst.etf_category == "Thematic - AI / Covered Call"
+    assert inst.sector == "Technology"
+    assert inst.name == "REX AI Equity Premium Income ETF"
+
+
+def test_curated_map_skips_already_populated(db):
+    """Curated symbol with sector already set is skipped entirely."""
+    from app.services.sync import backfill_all_sectors
+
+    db.add(Instrument(symbol="SPYI", name="NEOS S&P 500", sector="Diversified"))
+    db.commit()
+
+    with patch("app.services.yfinance_client.get_ticker_info") as mock_yf, \
+         patch("time.sleep"):
+        count = backfill_all_sectors(db)
+
+    mock_yf.assert_not_called()
+    assert count == 0
+
+
+def test_unknown_symbol_falls_through_to_yfinance(db):
+    """Symbol NOT in curated map falls through to yfinance classification."""
+    from app.services.sync import backfill_all_sectors
+
+    db.add(Instrument(symbol="AAPL", name="Apple"))
+    db.commit()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_EQUITY), \
+         patch("time.sleep"):
+        count = backfill_all_sectors(db)
+
+    assert count == 1
+    inst = db.get(Instrument, "AAPL")
+    assert inst.sector == "Technology"
+    assert inst.is_etf is False
