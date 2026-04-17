@@ -1,0 +1,12 @@
+[Unit]
+Description=Snowbird nightly Postgres backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/snowbird/scripts/pg_backup.sh
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snowbird-backup
