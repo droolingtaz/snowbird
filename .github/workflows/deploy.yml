@@ -1,8 +1,5 @@
 name: Deploy — self-hosted runner + smoke + auto-rollback
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 on:
   workflow_call:
     inputs:
@@ -30,7 +27,7 @@ jobs:
       SMOKE_ALPACA_SECRET: ${{ secrets.SMOKE_ALPACA_SECRET }}
     steps:
       - name: Checkout repo on runner
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Sync scripts & compose file to /opt/snowbird
         run: |
