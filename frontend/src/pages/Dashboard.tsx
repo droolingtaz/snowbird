@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   usePortfolioSummary, usePortfolioHistory, usePortfolioAllocation,
-  useHoldings, useDividendCalendar,
+  useHoldings, useDividendCalendar, useBenchmark,
 } from "../api/hooks";
 import { useAuthStore } from "../store/auth";
 import StatTile from "../components/StatTile";
@@ -28,6 +28,8 @@ export default function Dashboard() {
   const { data: history, isLoading: histLoading } = usePortfolioHistory(period);
   const { data: allocation } = usePortfolioAllocation(allocBy);
   const { data: holdings = [] } = useHoldings();
+
+  const { data: benchmarkRaw } = useBenchmark("SPY", period);
 
   const today = format(new Date(), "yyyy-MM-dd");
   const in90 = format(addDays(new Date(), 90), "yyyy-MM-dd");
@@ -87,6 +89,7 @@ export default function Dashboard() {
           period={period}
           onPeriodChange={setPeriod}
           showBenchmark={showBenchmark}
+          benchmarkData={benchmarkRaw?.points}
           onBenchmarkToggle={() => setShowBenchmark(!showBenchmark)}
         />
       </Card>
