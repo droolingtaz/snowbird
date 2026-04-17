@@ -117,7 +117,7 @@ def get_bars_cached(symbol: str, timeframe: str, start: str, end: str, account=N
             feed=DataFeed.IEX,
         )
         resp = client.get_stock_bars(req)
-        bars_data = resp.get(symbol, [])
+        bars_data = resp.data.get(symbol, [])
         result = [
             {
                 "timestamp": str(b.timestamp),
