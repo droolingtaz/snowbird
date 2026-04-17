@@ -1,4 +1,4 @@
-"""CLI task: backfill instrument sectors from Finnhub.
+"""CLI task: backfill instrument sectors via yfinance (primary) + Finnhub fallback.
 
 Usage:
     python -m app.tasks.refresh_instruments
@@ -19,7 +19,7 @@ def main() -> None:
     from app.db import SessionLocal
     from app.services.sync import backfill_all_sectors
 
-    logger.info("Starting instrument sector backfill via Finnhub...")
+    logger.info("Starting instrument sector backfill...")
     db = SessionLocal()
     try:
         updated = backfill_all_sectors(db)

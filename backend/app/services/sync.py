@@ -488,21 +488,39 @@ def backfill_all_sectors(db: Session) -> int:
 
     Uses yfinance first, then falls back to Finnhub stock/profile2.
     Returns the number of instruments updated.
+
+    On failure for a single symbol, logs a WARNING and continues to the next
+    symbol so the entire batch is not aborted.
     """
     instruments = db.execute(select(Instrument)).scalars().all()
     updated = 0
+    failed = 0
     total = len(instruments)
     for idx, inst in enumerate(instruments, 1):
         if inst.sector:
-            logger.debug("[%d/%d] %s already has sector=%s", idx, total, inst.symbol, inst.sector)
+            logger.debug("[%d/%d] %s already has sector=%s — skipping", idx, total, inst.symbol, inst.sector)
             continue
-        if _classify_instrument(inst):
-            updated += 1
-            logger.info("[%d/%d] %s -> sector=%s, etf=%s", idx, total, inst.symbol, inst.sector, inst.is_etf)
-        else:
-            logger.info("[%d/%d] No data for %s", idx, total, inst.symbol)
+        logger.info("[%d/%d] Classifying %s ...", idx, total, inst.symbol)
+        try:
+            if _classify_instrument(inst):
+                updated += 1
+                logger.info(
+                    "[%d/%d] %s -> sector=%s, asset_class=%s, etf=%s",
+                    idx, total, inst.symbol, inst.sector, inst.asset_class, inst.is_etf,
+                )
+            else:
+                logger.info("[%d/%d] No data returned for %s", idx, total, inst.symbol)
+        except Exception as exc:
+            failed += 1
+            logger.warning(
+                "[%d/%d] Failed to classify %s (continuing): %s",
+                idx, total, inst.symbol, exc,
+            )
 
     if updated:
         db.commit()
-    logger.info("Backfill complete: %d/%d instruments updated", updated, total)
+    logger.info(
+        "Backfill complete: %d/%d instruments updated, %d failed",
+        updated, total, failed,
+    )
     return updated
