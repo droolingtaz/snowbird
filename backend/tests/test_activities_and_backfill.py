@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 
 import pytest
 from sqlalchemy import select
@@ -48,6 +48,15 @@ def _fake_portfolio_history(num_days=120):
     }
 
 
+def _mock_httpx_response(json_data, status_code=200):
+    """Build a mock httpx.Response for use with patch('httpx.get')."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = json_data
+    return resp
+
+
 # ---------------------------------------------------------------------------
 # Bug 1 — _sync_activities via raw REST
 # ---------------------------------------------------------------------------
@@ -57,14 +66,11 @@ class TestSyncActivitiesREST:
 
     def test_dividends_written(self, db, demo_account):
         """DIV activities from REST response are persisted to the DB."""
-        fake_resp = MagicMock()
-        fake_resp.status_code = 200
-        fake_resp.raise_for_status = MagicMock()
-        fake_resp.json.return_value = [
+        fake_resp = _mock_httpx_response([
             _fake_activity_json("act-001", "DIV", "AAPL", "1.50"),
             _fake_activity_json("act-002", "DIV", "MSFT", "2.75"),
             _fake_activity_json("act-003", "FILL", "TSLA", "0", qty="10", price="250.00"),
-        ]
+        ])
 
         mock_client = MagicMock()
 
@@ -80,6 +86,18 @@ class TestSyncActivitiesREST:
         assert len(div_acts) == 2
         assert {a.symbol for a in div_acts} == {"AAPL", "MSFT"}
         assert div_acts[0].net_amount in (Decimal("1.50"), Decimal("2.75"))
+
+    def test_no_activity_types_filter_sent(self, db, demo_account):
+        """activity_types param must NOT be sent (Alpaca returns all types by default)."""
+        fake_resp = _mock_httpx_response([])
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp) as mock_httpx_get:
+            _sync_activities(db, mock_client, demo_account)
+
+        mock_httpx_get.assert_called_once()
+        _, kwargs = mock_httpx_get.call_args
+        assert "activity_types" not in kwargs.get("params", {})
 
     def test_duplicate_activities_skipped(self, db, demo_account):
         """Re-syncing the same activities does not create duplicates."""
@@ -169,14 +187,15 @@ class TestSyncActivitiesREST:
 # ---------------------------------------------------------------------------
 
 class TestBackfillSnapshots:
-    """Portfolio history backfill writes daily snapshots."""
+    """Portfolio history backfill via httpx.get writes daily snapshots."""
 
     def test_backfill_writes_snapshots(self, db, demo_account):
         """Backfill from 120-day history creates 120 snapshots."""
+        fake_resp = _mock_httpx_response(_fake_portfolio_history(120))
         mock_client = MagicMock()
-        mock_client.get.return_value = _fake_portfolio_history(120)
 
-        _backfill_snapshots(db, mock_client, demo_account)
+        with patch("httpx.get", return_value=fake_resp):
+            _backfill_snapshots(db, mock_client, demo_account)
 
         snapshots = db.execute(
             select(PortfolioSnapshot).where(
@@ -190,15 +209,54 @@ class TestBackfillSnapshots:
         assert first.date == date(2025, 1, 1)
         assert first.equity == Decimal("10000.0")
 
+    def test_backfill_calls_correct_url(self, db, demo_account):
+        """httpx.get is called with the account's base_url + /v2/account/portfolio/history."""
+        fake_resp = _mock_httpx_response(_fake_portfolio_history(10))
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp) as mock_httpx_get:
+            _backfill_snapshots(db, mock_client, demo_account)
+
+        mock_httpx_get.assert_called_once()
+        args, kwargs = mock_httpx_get.call_args
+        assert args[0] == "https://paper-api.alpaca.markets/v2/account/portfolio/history"
+        assert kwargs["params"] == {"period": "1A", "timeframe": "1D"}
+        assert "APCA-API-KEY-ID" in kwargs["headers"]
+
+    def test_backfill_realistic_10day_history(self, db, demo_account):
+        """Realistic 10-day Alpaca portfolio history JSON produces correct snapshots."""
+        history = _fake_portfolio_history(10)
+        fake_resp = _mock_httpx_response(history)
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp):
+            _backfill_snapshots(db, mock_client, demo_account)
+
+        snapshots = db.execute(
+            select(PortfolioSnapshot).where(
+                PortfolioSnapshot.account_id == demo_account.id
+            ).order_by(PortfolioSnapshot.date)
+        ).scalars().all()
+        assert len(snapshots) == 10
+
+        # Verify first and last
+        assert snapshots[0].date == date(2025, 1, 1)
+        assert snapshots[0].equity == Decimal("10000.0")
+        assert snapshots[0].pnl == Decimal("0.0")
+        assert snapshots[9].date == date(2025, 1, 10)
+        assert snapshots[9].equity == Decimal(str(10000.0 + 9 * 10.5))
+        assert snapshots[9].pnl == Decimal(str(9 * 10.5))
+
     def test_backfill_idempotent(self, db, demo_account):
         """Running backfill twice does not double-insert."""
+        fake_resp = _mock_httpx_response(_fake_portfolio_history(100))
         mock_client = MagicMock()
-        mock_client.get.return_value = _fake_portfolio_history(100)
 
-        _backfill_snapshots(db, mock_client, demo_account)
-        db.flush()
-        _backfill_snapshots(db, mock_client, demo_account)
-        db.flush()
+        with patch("httpx.get", return_value=fake_resp):
+            _backfill_snapshots(db, mock_client, demo_account)
+            db.flush()
+            _backfill_snapshots(db, mock_client, demo_account)
+            db.flush()
 
         count = db.execute(
             select(PortfolioSnapshot).where(
@@ -219,10 +277,11 @@ class TestBackfillSnapshots:
         db.add(existing_snap)
         db.flush()
 
+        fake_resp = _mock_httpx_response(_fake_portfolio_history(5))
         mock_client = MagicMock()
-        mock_client.get.return_value = _fake_portfolio_history(5)
 
-        _backfill_snapshots(db, mock_client, demo_account)
+        with patch("httpx.get", return_value=fake_resp):
+            _backfill_snapshots(db, mock_client, demo_account)
 
         snap = db.execute(
             select(PortfolioSnapshot).where(
@@ -235,12 +294,12 @@ class TestBackfillSnapshots:
         assert snap.cash == Decimal("5000")
 
     def test_backfill_error_does_not_fail_sync(self, db, demo_account):
-        """If client.get raises, backfill returns gracefully."""
+        """If httpx.get raises, backfill returns gracefully."""
         mock_client = MagicMock()
-        mock_client.get.side_effect = Exception("API error")
 
-        # Should not raise
-        _backfill_snapshots(db, mock_client, demo_account)
+        with patch("httpx.get", side_effect=Exception("API error")):
+            # Should not raise
+            _backfill_snapshots(db, mock_client, demo_account)
 
         snapshots = db.execute(
             select(PortfolioSnapshot).where(
@@ -254,10 +313,11 @@ class TestBackfillSnapshots:
         history = _fake_portfolio_history(5)
         history["equity"][2] = None  # null out day 3
 
+        fake_resp = _mock_httpx_response(history)
         mock_client = MagicMock()
-        mock_client.get.return_value = history
 
-        _backfill_snapshots(db, mock_client, demo_account)
+        with patch("httpx.get", return_value=fake_resp):
+            _backfill_snapshots(db, mock_client, demo_account)
 
         snapshots = db.execute(
             select(PortfolioSnapshot).where(
@@ -284,15 +344,17 @@ class TestSyncAccountBackfillIntegration:
         mock_client.get_account.return_value = MagicMock(
             equity="10000", cash="2000", long_market_value="8000",
         )
-        mock_client.get.return_value = _fake_portfolio_history(30)
 
-        fake_http_resp = MagicMock()
-        fake_http_resp.status_code = 200
-        fake_http_resp.raise_for_status = MagicMock()
-        fake_http_resp.json.return_value = []
+        # httpx.get is called for both backfill (portfolio history) and activities
+        call_count = [0]
+        def _fake_httpx_get(url, **kwargs):
+            call_count[0] += 1
+            if "portfolio/history" in url:
+                return _mock_httpx_response(_fake_portfolio_history(30))
+            return _mock_httpx_response([])  # activities
 
         with patch("app.services.sync.get_trading_client", return_value=mock_client), \
-             patch("httpx.get", return_value=fake_http_resp):
+             patch("httpx.get", side_effect=_fake_httpx_get):
             sync_account(db, demo_account)
 
         # Backfill should have inserted 30 + today's snapshot = 31 (or 30 if today overlaps)
@@ -302,7 +364,7 @@ class TestSyncAccountBackfillIntegration:
             )
         ).scalars().all()
         assert len(snapshots) >= 30
-        mock_client.get.assert_called_once()
+        assert call_count[0] == 2  # one for backfill, one for activities
 
     def test_subsequent_sync_skips_backfill(self, db, demo_account):
         """Backfill is NOT called when last_sync_at is set."""
@@ -316,14 +378,14 @@ class TestSyncAccountBackfillIntegration:
             equity="10000", cash="2000", long_market_value="8000",
         )
 
-        fake_http_resp = MagicMock()
-        fake_http_resp.status_code = 200
-        fake_http_resp.raise_for_status = MagicMock()
-        fake_http_resp.json.return_value = []
+        def _fake_httpx_get(url, **kwargs):
+            # Only activities call should happen, no portfolio/history
+            assert "portfolio/history" not in url
+            return _mock_httpx_response([])
 
         with patch("app.services.sync.get_trading_client", return_value=mock_client), \
-             patch("httpx.get", return_value=fake_http_resp):
+             patch("httpx.get", side_effect=_fake_httpx_get) as mock_httpx_get:
             sync_account(db, demo_account)
 
-        # client.get should NOT have been called (no backfill)
-        mock_client.get.assert_not_called()
+        # httpx.get called once for activities only (no backfill)
+        assert mock_httpx_get.call_count == 1
