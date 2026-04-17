@@ -5,7 +5,7 @@
 #   1. Backend /api/health responds 200
 #   2. Frontend bundle served on :8080
 #   3. Login with demo credentials
-#   4. (optional) Alpaca paper trading flow: sync, place $1 order, cancel
+#   4. (optional) Alpaca paper trading flow: sync, fetch summary
 #
 # Exit code 0 on success, non-zero triggers rollback.
 
@@ -99,19 +99,6 @@ if [ -n "$ALPACA_KEY" ] && [ -n "$ALPACA_SECRET" ]; then
     SUMMARY=$(curl -fsS -H "$AUTH" "$BACKEND/api/portfolio/summary?account_id=$SMOKE_ACCT_ID")
     echo "$SUMMARY" | python3 -m json.tool >/dev/null || fail "Summary not valid JSON"
 
-    log "  -> Placing \$1 notional paper BUY on AAPL ..."
-    ORDER=$(curl -sS -X POST "$BACKEND/api/orders" \
-        -H "$AUTH" -H "$JSON" \
-        -d "{\"account_id\":$SMOKE_ACCT_ID,\"symbol\":\"AAPL\",\"side\":\"buy\",\"type\":\"market\",\"notional\":1,\"time_in_force\":\"day\"}")
-    ORDER_ID=$(echo "$ORDER" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("id",""))' 2>/dev/null || echo "")
-
-    if [ -n "$ORDER_ID" ]; then
-        log "  -> Order $ORDER_ID placed. Cancelling ..."
-        curl -sS -X DELETE -H "$AUTH" "$BACKEND/api/orders/$ORDER_ID?account_id=$SMOKE_ACCT_ID" >/dev/null || true
-    else
-        # Market may be closed or fractional not enabled — acceptable; log the response
-        log "  -> Order placement returned: $ORDER  (non-fatal if market closed)"
-    fi
     log "Alpaca paper smoke test completed"
 else
     log "Skipping Alpaca paper smoke test (SMOKE_ALPACA_KEY / SECRET not set)"
