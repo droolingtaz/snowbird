@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         "httpx==0.27.0" \
         "python-dateutil==2.9.0" \
         "pytz==2024.1" \
-        "pyxirr==0.10.8"
+        "pyxirr==0.10.8" \
+        "yfinance>=0.2.40"
 
 COPY . .
 

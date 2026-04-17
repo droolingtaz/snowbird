@@ -26,6 +26,7 @@ dependencies = [
     "python-dateutil==2.9.0",
     "pytz==2024.1",
     "pyxirr>=0.10.0",
+    "yfinance>=0.2.40",
 ]
 
 [project.optional-dependencies]

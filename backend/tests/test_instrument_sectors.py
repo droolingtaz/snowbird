@@ -1,4 +1,4 @@
-"""Tests for Finnhub company profile / ETF integration and allocation endpoints."""
+"""Tests for instrument classification (yfinance + Finnhub fallback) and allocation endpoints."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -60,7 +60,7 @@ def demo_account(db):
     return acct
 
 
-# ── Finnhub get_company_profile ──────────────────────────────────────────────
+# ── Sample data ──────────────────────────────────────────────────────────────
 
 SAMPLE_PROFILE = {
     "country": "US",
@@ -77,22 +77,62 @@ SAMPLE_PROFILE = {
     "weburl": "https://www.apple.com/",
 }
 
-SAMPLE_ETF_PROFILE = {
-    "symbol": "SPYI",
-    "category": "Equity Income",
-    "assetClass": "Equity",
-    "issuer": "Neos",
-    "expenseRatio": 0.68,
-    "aum": 5200000000,
+SAMPLE_YFINANCE_ETF = {
+    "quoteType": "ETF",
+    "category": "Derivative Income",
+    "fundFamily": "Neos",
+    "longName": "NEOS S&P 500 High Income ETF",
+    "sector": None,
+    "industry": None,
 }
 
-SAMPLE_ETF_SECTOR_EXPOSURE = [
-    {"industry": "Technology", "exposure": 35.2},
-    {"industry": "Healthcare", "exposure": 15.1},
-    {"industry": "Financials", "exposure": 12.5},
-    {"industry": "Consumer Cyclical", "exposure": 10.3},
-]
+SAMPLE_YFINANCE_EQUITY = {
+    "quoteType": "EQUITY",
+    "category": None,
+    "fundFamily": None,
+    "longName": "Apple Inc.",
+    "sector": "Technology",
+    "industry": "Consumer Electronics",
+}
 
+SAMPLE_YFINANCE_TREASURY_ETF = {
+    "quoteType": "ETF",
+    "category": "Short Government",
+    "fundFamily": "iShares",
+    "longName": "iShares 0-3 Month Treasury Bond ETF",
+    "sector": None,
+    "industry": None,
+}
+
+SAMPLE_YFINANCE_CRYPTO_ETF = {
+    "quoteType": "ETF",
+    "category": "Digital Assets",
+    "fundFamily": "ProShares",
+    "longName": "ProShares Bitcoin Strategy ETF",
+    "sector": None,
+    "industry": None,
+}
+
+SAMPLE_YFINANCE_REAL_ESTATE_ETF = {
+    "quoteType": "ETF",
+    "category": "Real Estate",
+    "fundFamily": "Vanguard",
+    "longName": "Vanguard Real Estate ETF",
+    "sector": None,
+    "industry": None,
+}
+
+SAMPLE_YFINANCE_COMMODITY_ETF = {
+    "quoteType": "ETF",
+    "category": "Commodities Focused",
+    "fundFamily": "SPDR",
+    "longName": "SPDR Gold Shares",
+    "sector": None,
+    "industry": None,
+}
+
+
+# ── Finnhub get_company_profile ──────────────────────────────────────────────
 
 def test_get_company_profile_returns_dict():
     """get_company_profile returns parsed profile dict on success."""
@@ -166,14 +206,14 @@ def test_get_company_profile_returns_none_on_http_error():
 # ── _backfill_sectors ─────────────────────────────────────────────────────────
 
 def test_backfill_sectors_updates_instrument(db):
-    """_backfill_sectors writes sector from Finnhub profile to instrument row."""
+    """_backfill_sectors writes sector from yfinance to instrument row."""
     from app.services.sync import _backfill_sectors
 
     inst = Instrument(symbol="AAPL", name="Apple", asset_class="us_equity")
     db.add(inst)
     db.commit()
 
-    with patch("app.services.finnhub.get_company_profile", return_value=SAMPLE_PROFILE), \
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_EQUITY), \
          patch("time.sleep"):
         _backfill_sectors(db, ["AAPL"])
 
@@ -182,29 +222,30 @@ def test_backfill_sectors_updates_instrument(db):
 
 
 def test_backfill_sectors_skips_existing_sector(db):
-    """_backfill_sectors does not call Finnhub for instruments that already have sector."""
+    """_backfill_sectors does not call yfinance for instruments that already have sector."""
     from app.services.sync import _backfill_sectors
 
     inst = Instrument(symbol="MSFT", name="Microsoft", sector="Technology")
     db.add(inst)
     db.commit()
 
-    with patch("app.services.finnhub.get_company_profile") as mock_profile, \
+    with patch("app.services.yfinance_client.get_ticker_info") as mock_yf, \
          patch("time.sleep"):
         _backfill_sectors(db, ["MSFT"])
 
-    mock_profile.assert_not_called()
+    mock_yf.assert_not_called()
 
 
-def test_backfill_sectors_handles_none_profile(db):
-    """_backfill_sectors gracefully handles None profile (API error)."""
+def test_backfill_sectors_handles_none_info(db):
+    """_backfill_sectors gracefully handles None from yfinance."""
     from app.services.sync import _backfill_sectors
 
     inst = Instrument(symbol="XYZ", name="XYZ Corp")
     db.add(inst)
     db.commit()
 
-    with patch("app.services.finnhub.get_company_profile", return_value=None), \
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=None), \
+         patch("app.services.finnhub.get_company_profile", return_value=None), \
          patch("time.sleep"):
         _backfill_sectors(db, ["XYZ"])
 
@@ -222,9 +263,7 @@ def test_backfill_all_sectors_updates_count(db):
     db.add(Instrument(symbol="GOOG", name="Google", sector="Technology"))
     db.commit()
 
-    profiles = {"AAPL": SAMPLE_PROFILE, "GOOG": SAMPLE_PROFILE}
-
-    with patch("app.services.finnhub.get_company_profile", side_effect=lambda s: profiles.get(s)), \
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_EQUITY), \
          patch("time.sleep"):
         count = backfill_all_sectors(db)
 
@@ -386,124 +425,128 @@ def test_allocation_unknown_when_no_sector():
     engine.dispose()
 
 
-# ── Finnhub ETF endpoints ────────────────────────────────────────────────────
+# ── yfinance_client unit tests ──────────────────────────────────────────────
 
-def test_get_etf_profile_returns_dict():
-    """get_etf_profile returns parsed ETF profile dict on success."""
-    import app.services.finnhub as fh
+def test_derive_asset_class_etf_equity():
+    """ETF with generic category defaults to Equity asset class."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class("ETF", "Derivative Income") == "Equity"
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = SAMPLE_ETF_PROFILE
 
-    with patch.object(fh, "settings") as mock_settings, \
-         patch("httpx.get", return_value=mock_resp):
-        mock_settings.FINNHUB_API_KEY = "test-key"
-        result = fh.get_etf_profile("SPYI")
+def test_derive_asset_class_etf_fixed_income():
+    """ETF with treasury/bond category → Fixed Income."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class("ETF", "Short Government") == "Fixed Income"
+    assert derive_asset_class("ETF", "Long-Term Treasury") == "Fixed Income"
+    assert derive_asset_class("ETF", "Corporate Bond") == "Fixed Income"
+
+
+def test_derive_asset_class_etf_crypto():
+    """ETF with crypto/digital category → Crypto."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class("ETF", "Digital Assets") == "Crypto"
+    assert derive_asset_class("ETF", "Crypto") == "Crypto"
+
+
+def test_derive_asset_class_etf_real_estate():
+    """ETF with real estate/REIT category → Real Estate."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class("ETF", "Real Estate") == "Real Estate"
+    assert derive_asset_class("ETF", "REIT") == "Real Estate"
+
+
+def test_derive_asset_class_etf_commodities():
+    """ETF with commodity category → Commodities."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class("ETF", "Commodities Focused") == "Commodities"
+    assert derive_asset_class("ETF", "Gold") == "Commodities"
+
+
+def test_derive_asset_class_equity():
+    """EQUITY quoteType → Equity."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class("EQUITY", None) == "Equity"
+    assert derive_asset_class("EQUITY", "something") == "Equity"
+
+
+def test_derive_asset_class_unknown():
+    """Unknown quoteType → Other."""
+    from app.services.yfinance_client import derive_asset_class
+    assert derive_asset_class(None, None) == "Other"
+    assert derive_asset_class("MUTUALFUND", "Some Category") == "Other"
+
+
+def test_get_ticker_info_returns_dict():
+    """get_ticker_info returns parsed info dict on success."""
+    from app.services.yfinance_client import get_ticker_info
+
+    mock_info = {
+        "quoteType": "ETF",
+        "category": "Derivative Income",
+        "fundFamily": "Neos",
+        "longName": "NEOS S&P 500 High Income ETF",
+        "sector": None,
+        "sectorDisp": None,
+        "industry": None,
+        "industryDisp": None,
+    }
+
+    mock_ticker = MagicMock()
+    mock_ticker.info = mock_info
+
+    with patch("app.services.yfinance_client._cache_get", return_value=None), \
+         patch("app.services.yfinance_client._cache_set"), \
+         patch("yfinance.Ticker", return_value=mock_ticker):
+        result = get_ticker_info("SPYI")
 
     assert result is not None
-    assert result["category"] == "Equity Income"
-    assert result["assetClass"] == "Equity"
+    assert result["quoteType"] == "ETF"
+    assert result["category"] == "Derivative Income"
+    assert result["longName"] == "NEOS S&P 500 High Income ETF"
 
 
-def test_get_etf_profile_returns_none_without_key():
-    """get_etf_profile returns None when API key is missing."""
-    import app.services.finnhub as fh
+def test_get_ticker_info_returns_cached():
+    """get_ticker_info returns cached result when available."""
+    from app.services.yfinance_client import get_ticker_info
 
-    with patch.object(fh, "settings") as mock_settings:
-        mock_settings.FINNHUB_API_KEY = None
-        result = fh.get_etf_profile("SPYI")
+    cached = {"quoteType": "ETF", "category": "Equity Income"}
 
-    assert result is None
+    with patch("app.services.yfinance_client._cache_get", return_value=cached):
+        result = get_ticker_info("SPYI")
+
+    assert result == cached
 
 
-def test_get_etf_profile_returns_none_on_empty():
-    """get_etf_profile returns None when Finnhub returns empty object."""
-    import app.services.finnhub as fh
+def test_get_ticker_info_handles_exception():
+    """get_ticker_info returns None on yfinance exception."""
+    from app.services.yfinance_client import get_ticker_info
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {}
-
-    with patch.object(fh, "settings") as mock_settings, \
-         patch("httpx.get", return_value=mock_resp):
-        mock_settings.FINNHUB_API_KEY = "test-key"
-        result = fh.get_etf_profile("UNKNOWN")
+    with patch("app.services.yfinance_client._cache_get", return_value=None), \
+         patch("yfinance.Ticker", side_effect=Exception("network error")):
+        result = get_ticker_info("FAIL")
 
     assert result is None
 
 
-def test_get_etf_sector_exposure_returns_list():
-    """get_etf_sector_exposure returns sector list on success."""
-    import app.services.finnhub as fh
+def test_get_ticker_info_returns_none_on_empty_info():
+    """get_ticker_info returns None when yfinance returns empty/missing quoteType."""
+    from app.services.yfinance_client import get_ticker_info
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {"sectorExposure": SAMPLE_ETF_SECTOR_EXPOSURE}
+    mock_ticker = MagicMock()
+    mock_ticker.info = {"quoteType": None}
 
-    with patch.object(fh, "settings") as mock_settings, \
-         patch("httpx.get", return_value=mock_resp):
-        mock_settings.FINNHUB_API_KEY = "test-key"
-        result = fh.get_etf_sector_exposure("SPYI")
-
-    assert result is not None
-    assert len(result) == 4
-    assert result[0]["industry"] == "Technology"
-
-
-def test_get_etf_sector_exposure_returns_none_on_empty():
-    """get_etf_sector_exposure returns None when exposure array is empty."""
-    import app.services.finnhub as fh
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {"sectorExposure": []}
-
-    with patch.object(fh, "settings") as mock_settings, \
-         patch("httpx.get", return_value=mock_resp):
-        mock_settings.FINNHUB_API_KEY = "test-key"
-        result = fh.get_etf_sector_exposure("UNKNOWN")
+    with patch("app.services.yfinance_client._cache_get", return_value=None), \
+         patch("yfinance.Ticker", return_value=mock_ticker):
+        result = get_ticker_info("EMPTY")
 
     assert result is None
 
 
-def test_get_etf_sector_exposure_returns_none_without_key():
-    """get_etf_sector_exposure returns None when API key is missing."""
-    import app.services.finnhub as fh
+# ── _classify_instrument (yfinance primary + Finnhub fallback) ──────────────
 
-    with patch.object(fh, "settings") as mock_settings:
-        mock_settings.FINNHUB_API_KEY = None
-        result = fh.get_etf_sector_exposure("SPYI")
-
-    assert result is None
-
-
-# ── _classify_instrument_via_finnhub ─────────────────────────────────────────
-
-def test_classify_stock_via_profile(db):
-    """Stock with a valid company profile gets sector set, is_etf=False."""
-    from app.services.sync import _classify_instrument_via_finnhub
-
-    inst = Instrument(symbol="AAPL", name="Apple", asset_class="us_equity")
-    db.add(inst)
-    db.commit()
-
-    mock_time = MagicMock()
-
-    with patch("app.services.finnhub.get_company_profile", return_value=SAMPLE_PROFILE), \
-         patch("app.services.finnhub.get_etf_profile") as mock_etf_profile:
-        changed = _classify_instrument_via_finnhub(inst, _time_module=mock_time)
-
-    assert changed is True
-    assert inst.sector == "Technology"
-    assert inst.is_etf is False
-    # Should NOT have called ETF endpoints
-    mock_etf_profile.assert_not_called()
-
-
-def test_classify_etf_via_fallback(db):
-    """ETF with empty stock profile falls back to ETF endpoints."""
-    from app.services.sync import _classify_instrument_via_finnhub
+def test_classify_etf_via_yfinance(db):
+    """ETF classified via yfinance sets is_etf, etf_category, asset_class, sector."""
+    from app.services.sync import _classify_instrument
 
     inst = Instrument(symbol="SPYI", name="NEOS S&P 500 High Income ETF")
     db.add(inst)
@@ -511,21 +554,42 @@ def test_classify_etf_via_fallback(db):
 
     mock_time = MagicMock()
 
-    with patch("app.services.finnhub.get_company_profile", return_value=None), \
-         patch("app.services.finnhub.get_etf_profile", return_value=SAMPLE_ETF_PROFILE), \
-         patch("app.services.finnhub.get_etf_sector_exposure", return_value=SAMPLE_ETF_SECTOR_EXPOSURE):
-        changed = _classify_instrument_via_finnhub(inst, _time_module=mock_time)
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_ETF):
+        changed = _classify_instrument(inst, _time_module=mock_time)
 
     assert changed is True
     assert inst.is_etf is True
-    assert inst.etf_category == "Equity Income"
+    assert inst.etf_category == "Derivative Income"
     assert inst.asset_class == "Equity"
-    assert inst.sector == "Technology"  # top weight from sector exposure
+    assert inst.name == "NEOS S&P 500 High Income ETF"
 
 
-def test_classify_etf_diversified_when_no_sector_exposure(db):
-    """ETF with profile but empty sector exposure gets sector='Diversified'."""
-    from app.services.sync import _classify_instrument_via_finnhub
+def test_classify_equity_via_yfinance(db):
+    """Equity classified via yfinance sets sector, industry, is_etf=False."""
+    from app.services.sync import _classify_instrument
+
+    inst = Instrument(symbol="AAPL", name="Apple", asset_class="us_equity")
+    db.add(inst)
+    db.commit()
+
+    mock_time = MagicMock()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_EQUITY), \
+         patch("app.services.finnhub.get_company_profile") as mock_fh:
+        changed = _classify_instrument(inst, _time_module=mock_time)
+
+    assert changed is True
+    assert inst.sector == "Technology"
+    assert inst.industry == "Consumer Electronics"
+    assert inst.is_etf is False
+    assert inst.asset_class == "Equity"
+    # Finnhub should NOT have been called since yfinance succeeded
+    mock_fh.assert_not_called()
+
+
+def test_classify_treasury_etf_via_yfinance(db):
+    """Treasury ETF gets asset_class=Fixed Income."""
+    from app.services.sync import _classify_instrument
 
     inst = Instrument(symbol="SGOV", name="iShares 0-3 Month Treasury Bond ETF")
     db.add(inst)
@@ -533,23 +597,96 @@ def test_classify_etf_diversified_when_no_sector_exposure(db):
 
     mock_time = MagicMock()
 
-    with patch("app.services.finnhub.get_company_profile", return_value=None), \
-         patch("app.services.finnhub.get_etf_profile", return_value={
-             "symbol": "SGOV", "category": "Short-Term Treasury", "assetClass": "Fixed Income",
-         }), \
-         patch("app.services.finnhub.get_etf_sector_exposure", return_value=None):
-        changed = _classify_instrument_via_finnhub(inst, _time_module=mock_time)
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_TREASURY_ETF):
+        changed = _classify_instrument(inst, _time_module=mock_time)
 
     assert changed is True
     assert inst.is_etf is True
-    assert inst.etf_category == "Short-Term Treasury"
+    assert inst.etf_category == "Short Government"
     assert inst.asset_class == "Fixed Income"
-    assert inst.sector == "Diversified"
+    assert inst.sector == "Fixed Income"
 
 
-def test_classify_nothing_when_all_endpoints_empty(db):
-    """Instrument with no data from any endpoint is left unchanged."""
-    from app.services.sync import _classify_instrument_via_finnhub
+def test_classify_crypto_etf_via_yfinance(db):
+    """Crypto ETF gets asset_class=Crypto."""
+    from app.services.sync import _classify_instrument
+
+    inst = Instrument(symbol="BTCI", name="Bitcoin ETF")
+    db.add(inst)
+    db.commit()
+
+    mock_time = MagicMock()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_CRYPTO_ETF):
+        changed = _classify_instrument(inst, _time_module=mock_time)
+
+    assert changed is True
+    assert inst.is_etf is True
+    assert inst.asset_class == "Crypto"
+    assert inst.sector == "Crypto"
+
+
+def test_classify_real_estate_etf_via_yfinance(db):
+    """Real Estate ETF gets asset_class=Real Estate."""
+    from app.services.sync import _classify_instrument
+
+    inst = Instrument(symbol="VNQ", name="Vanguard Real Estate ETF")
+    db.add(inst)
+    db.commit()
+
+    mock_time = MagicMock()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_REAL_ESTATE_ETF):
+        changed = _classify_instrument(inst, _time_module=mock_time)
+
+    assert changed is True
+    assert inst.is_etf is True
+    assert inst.asset_class == "Real Estate"
+    assert inst.sector == "Real Estate"
+
+
+def test_classify_commodity_etf_via_yfinance(db):
+    """Commodity ETF gets asset_class=Commodities."""
+    from app.services.sync import _classify_instrument
+
+    inst = Instrument(symbol="GLD", name="SPDR Gold Shares")
+    db.add(inst)
+    db.commit()
+
+    mock_time = MagicMock()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_COMMODITY_ETF):
+        changed = _classify_instrument(inst, _time_module=mock_time)
+
+    assert changed is True
+    assert inst.is_etf is True
+    assert inst.asset_class == "Commodities"
+    assert inst.sector == "Commodities"
+
+
+def test_classify_falls_back_to_finnhub_on_yfinance_failure(db):
+    """When yfinance returns None, falls back to Finnhub stock/profile2."""
+    from app.services.sync import _classify_instrument
+
+    inst = Instrument(symbol="AAPL", name="Apple", asset_class="us_equity")
+    db.add(inst)
+    db.commit()
+
+    mock_time = MagicMock()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=None), \
+         patch("app.services.finnhub.get_company_profile", return_value=SAMPLE_PROFILE):
+        changed = _classify_instrument(inst, _time_module=mock_time)
+
+    assert changed is True
+    assert inst.sector == "Technology"
+    assert inst.is_etf is False
+    assert inst.asset_class == "Equity"
+
+
+def test_classify_nothing_when_all_fail(db):
+    """Instrument left unchanged when both yfinance and Finnhub return nothing."""
+    from app.services.sync import _classify_instrument
 
     inst = Instrument(symbol="ZZZZ", name="Unknown")
     db.add(inst)
@@ -557,10 +694,9 @@ def test_classify_nothing_when_all_endpoints_empty(db):
 
     mock_time = MagicMock()
 
-    with patch("app.services.finnhub.get_company_profile", return_value=None), \
-         patch("app.services.finnhub.get_etf_profile", return_value=None), \
-         patch("app.services.finnhub.get_etf_sector_exposure", return_value=None):
-        changed = _classify_instrument_via_finnhub(inst, _time_module=mock_time)
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=None), \
+         patch("app.services.finnhub.get_company_profile", return_value=None):
+        changed = _classify_instrument(inst, _time_module=mock_time)
 
     assert changed is False
     assert inst.sector is None
@@ -568,32 +704,52 @@ def test_classify_nothing_when_all_endpoints_empty(db):
     assert inst.etf_category is None
 
 
+def test_classify_etf_diversified_when_no_category_match(db):
+    """ETF with a category that doesn't match any keyword gets sector=Diversified."""
+    from app.services.sync import _classify_instrument
+
+    info = {
+        "quoteType": "ETF",
+        "category": "Covered Call",
+        "fundFamily": "Some Fund",
+        "longName": "Some Covered Call ETF",
+        "sector": None,
+        "industry": None,
+    }
+
+    inst = Instrument(symbol="XYLD", name="Covered Call ETF")
+    db.add(inst)
+    db.commit()
+
+    mock_time = MagicMock()
+
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=info):
+        changed = _classify_instrument(inst, _time_module=mock_time)
+
+    assert changed is True
+    assert inst.is_etf is True
+    assert inst.sector == "Diversified"
+    assert inst.asset_class == "Equity"
+
+
 # ── backfill_all_sectors with ETFs ───────────────────────────────────────────
 
 def test_backfill_all_sectors_classifies_etf(db):
-    """backfill_all_sectors handles ETFs via fallback to ETF endpoints."""
+    """backfill_all_sectors handles ETFs via yfinance."""
     from app.services.sync import backfill_all_sectors
 
     db.add(Instrument(symbol="SPYI", name="NEOS S&P 500 High Income ETF"))
     db.add(Instrument(symbol="AAPL", name="Apple", sector="Technology"))
     db.commit()
 
-    def fake_company_profile(sym):
-        return None  # all return empty to trigger ETF path
-
-    mock_time = MagicMock()
-
-    with patch("app.services.finnhub.get_company_profile", side_effect=fake_company_profile), \
-         patch("app.services.finnhub.get_etf_profile", return_value=SAMPLE_ETF_PROFILE), \
-         patch("app.services.finnhub.get_etf_sector_exposure", return_value=SAMPLE_ETF_SECTOR_EXPOSURE), \
+    with patch("app.services.yfinance_client.get_ticker_info", return_value=SAMPLE_YFINANCE_ETF), \
          patch("time.sleep"):
         count = backfill_all_sectors(db)
 
     assert count == 1  # only SPYI, AAPL skipped (has sector)
     spyi = db.get(Instrument, "SPYI")
     assert spyi.is_etf is True
-    assert spyi.etf_category == "Equity Income"
-    assert spyi.sector == "Technology"
+    assert spyi.etf_category == "Derivative Income"
 
 
 # ── Allocation endpoint with ETF category ────────────────────────────────────
@@ -627,3 +783,11 @@ def test_allocation_groups_by_asset_class(client_with_data):
     data = r.json()
     # Should return items (might be "Unknown" since seed data has no asset_class set)
     assert len(data["items"]) > 0
+
+
+# ── Backward compat alias ───────────────────────────────────────────────────
+
+def test_classify_instrument_via_finnhub_alias_exists():
+    """_classify_instrument_via_finnhub alias still works for backward compat."""
+    from app.services.sync import _classify_instrument_via_finnhub, _classify_instrument
+    assert _classify_instrument_via_finnhub is _classify_instrument
