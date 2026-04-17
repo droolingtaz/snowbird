@@ -6,7 +6,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    ca-certificates \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Ensure curl_cffi (used by yfinance) finds system CA certs
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 # Install Python deps
 COPY pyproject.toml .
@@ -31,7 +37,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         "python-dateutil==2.9.0" \
         "pytz==2024.1" \
         "pyxirr==0.10.8" \
-        "yfinance>=0.2.40"
+        "yfinance==0.2.50" \
+        "curl_cffi>=0.7.0"
 
 COPY . .
 
