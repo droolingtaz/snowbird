@@ -26,6 +26,16 @@ jobs:
       SMOKE_ALPACA_KEY: ${{ secrets.SMOKE_ALPACA_KEY }}
       SMOKE_ALPACA_SECRET: ${{ secrets.SMOKE_ALPACA_SECRET }}
     steps:
+      - name: Checkout repo on runner
+        uses: actions/checkout@v4
+
+      - name: Sync scripts & compose file to /opt/snowbird
+        run: |
+          set -euo pipefail
+          sudo install -m 0755 scripts/smoke_test.sh /opt/snowbird/scripts/smoke_test.sh
+          sudo install -m 0644 docker-compose.prod.yml /opt/snowbird/docker-compose.prod.yml
+          sudo chown -R "$USER:$USER" /opt/snowbird/scripts /opt/snowbird/docker-compose.prod.yml
+
       - name: Prepare deploy
         working-directory: /opt/snowbird
         run: |
