@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from app.deps import CurrentUser, DbSession
 from app.models.account import AlpacaAccount
@@ -33,8 +37,6 @@ def portfolio_summary(account_id: int, current_user: CurrentUser, db: DbSession)
         equity = float(alpaca_acct.equity or 0)
         cash = float(alpaca_acct.cash or 0)
         buying_power = float(alpaca_acct.buying_power or 0)
-        today_pl = float(alpaca_acct.equity_previous_close or equity) - equity
-        today_pl = float(alpaca_acct.equity or 0) - float(alpaca_acct.last_equity or alpaca_acct.equity or 0)
         prev_equity = float(alpaca_acct.last_equity or alpaca_acct.equity or equity)
         today_pl = equity - prev_equity
         today_pl_pct = (today_pl / prev_equity * 100) if prev_equity > 0 else 0.0
@@ -56,7 +58,7 @@ def portfolio_summary(account_id: int, current_user: CurrentUser, db: DbSession)
             positions_count=len(positions),
         )
     except Exception as exc:
-        # Graceful degradation: return zeros
+        logger.exception("portfolio_summary failed for account_id=%s", account_id)
         positions = db.execute(
             select(Position).where(Position.account_id == account_id)
         ).scalars().all()
