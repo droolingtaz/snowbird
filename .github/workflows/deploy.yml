@@ -33,8 +33,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -m 0755 scripts/smoke_test.sh /opt/snowbird/scripts/smoke_test.sh
+          sudo install -m 0755 scripts/pg_backup.sh /opt/snowbird/scripts/pg_backup.sh
           sudo install -m 0644 docker-compose.prod.yml /opt/snowbird/docker-compose.prod.yml
           sudo chown -R "$USER:$USER" /opt/snowbird/scripts /opt/snowbird/docker-compose.prod.yml
+          sudo install -m 0644 scripts/systemd/snowbird-backup.service /etc/systemd/system/snowbird-backup.service
+          sudo install -m 0644 scripts/systemd/snowbird-backup.timer /etc/systemd/system/snowbird-backup.timer
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now snowbird-backup.timer
 
       - name: Prepare deploy
         working-directory: /opt/snowbird
