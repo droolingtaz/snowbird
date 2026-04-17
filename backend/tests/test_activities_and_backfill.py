@@ -293,6 +293,51 @@ class TestBackfillSnapshots:
         assert snap.equity == Decimal("99999.99")
         assert snap.cash == Decimal("5000")
 
+    def test_backfill_with_preexisting_today_snapshot(self, db, demo_account):
+        """Regression: snapshot for a date in the backfill payload already exists.
+
+        Reproduces the production bug where _snapshot_equity (or fast_sync)
+        writes today's row before _backfill_snapshots runs. The backfill
+        payload includes that same date. With ON CONFLICT DO NOTHING the
+        insert must silently skip the conflicting row — no UniqueViolation.
+        """
+        # Pre-insert a snapshot for 2025-01-03 (day index 2 in the history)
+        conflict_date = date(2025, 1, 3)
+        existing_snap = PortfolioSnapshot(
+            account_id=demo_account.id,
+            date=conflict_date,
+            equity=Decimal("55555.55"),
+            cash=Decimal("1111.11"),
+        )
+        db.add(existing_snap)
+        db.flush()
+
+        # Backfill 5 days (2025-01-01 through 2025-01-05) — includes 2025-01-03
+        fake_resp = _mock_httpx_response(_fake_portfolio_history(5))
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp):
+            # Must not raise UniqueViolation
+            _backfill_snapshots(db, mock_client, demo_account)
+
+        all_snaps = db.execute(
+            select(PortfolioSnapshot).where(
+                PortfolioSnapshot.account_id == demo_account.id
+            )
+        ).scalars().all()
+        # 4 new + 1 pre-existing = 5 total
+        assert len(all_snaps) == 5
+
+        # The conflicting row must retain its original values (DO NOTHING)
+        conflict_snap = db.execute(
+            select(PortfolioSnapshot).where(
+                PortfolioSnapshot.account_id == demo_account.id,
+                PortfolioSnapshot.date == conflict_date,
+            )
+        ).scalar_one()
+        assert conflict_snap.equity == Decimal("55555.55")
+        assert conflict_snap.cash == Decimal("1111.11")
+
     def test_backfill_error_does_not_fail_sync(self, db, demo_account):
         """If httpx.get raises, backfill returns gracefully."""
         mock_client = MagicMock()
