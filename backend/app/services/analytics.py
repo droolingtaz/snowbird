@@ -173,19 +173,29 @@ def compute_monthly_returns(db: Session, account_id: int) -> List[MonthlyReturn]
 def compute_benchmark(
     db: Session, account_id: int, benchmark_symbol: str, period: str, account=None
 ) -> Tuple[List[BenchmarkPoint], Optional[float], Optional[float]]:
-    """Compute portfolio vs benchmark normalized series."""
+    """Compute portfolio vs benchmark normalized series.
+
+    The *period* parameter (1W, 1M, 3M, YTD, 1Y, ALL) controls how far
+    back we look.  Both the portfolio snapshots AND the benchmark bars are
+    filtered to the same date window so the returned series length matches
+    the requested range.
+    """
     from app.services.market_data import get_bars_cached
 
     days = _period_to_days(period)
-    since = date.today() - timedelta(days=days)
-    snapshots = get_snapshots(db, account_id, days)
+    today = date.today()
+    since = today - timedelta(days=days)
 
+    # ---- filter snapshots to the requested window ----
+    snapshots = get_snapshots(db, account_id, days)
     if not snapshots:
         return [], None, None
 
-    # Fetch benchmark bars
+    # ---- filter benchmark bars to the same window ----
     try:
-        bars = get_bars_cached(benchmark_symbol, "1Day", str(since), str(date.today()), account=account)
+        bars = get_bars_cached(
+            benchmark_symbol, "1Day", str(since), str(today), account=account,
+        )
     except Exception as exc:
         logger.warning("Benchmark bars fetch failed for %s: %s", benchmark_symbol, exc)
         bars = []
@@ -193,15 +203,25 @@ def compute_benchmark(
     if not bars:
         return [], None, None
 
-    # Build date lookup for snapshots
-    snap_by_date = {s.date: float(s.equity) for s in snapshots}
-    bar_by_date = {b["timestamp"][:10]: b["close"] for b in bars}
+    # Build date lookup – only keep entries inside [since, today]
+    snap_by_date = {
+        s.date: float(s.equity) for s in snapshots if s.date >= since
+    }
+    bar_by_date = {
+        b["timestamp"][:10]: b["close"]
+        for b in bars
+        if date.fromisoformat(b["timestamp"][:10]) >= since
+    }
 
     # Intersect dates
-    common_dates = sorted(set(snap_by_date.keys()) & {date.fromisoformat(d) for d in bar_by_date.keys()})
+    common_dates = sorted(
+        set(snap_by_date.keys())
+        & {date.fromisoformat(d) for d in bar_by_date.keys()}
+    )
     if not common_dates:
         return [], None, None
 
+    # Rebase both series to 100 at the first point *in* the filtered window
     port_base = snap_by_date[common_dates[0]]
     bench_base = bar_by_date[str(common_dates[0])]
 
