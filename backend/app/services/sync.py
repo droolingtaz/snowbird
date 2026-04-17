@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetOrdersRequest
@@ -140,13 +140,38 @@ def _sync_orders(db: Session, client: TradingClient, account: AlpacaAccount) -> 
     db.flush()
 
 
-def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount, days: int = 90) -> None:
-    """Fetch activities via raw REST (alpaca-py 0.26.0 lacks get_account_activities)."""
+_MIN_LOOKBACK_DAYS = 7
+_MAX_LOOKBACK_DAYS = 90
+
+
+def _sync_activities(db: Session, client: TradingClient, account: AlpacaAccount) -> None:
+    """Fetch activities via raw REST (alpaca-py 0.26.0 lacks get_account_activities).
+
+    Lookback window is computed dynamically from the most recent activity
+    already stored for this account (gap + 2-day margin, clamped to 7–90 days).
+    First sync for an account defaults to the full 90-day window.
+    """
     try:
         import httpx
         from app.security import decrypt_secret
 
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        latest = db.execute(
+            select(func.max(Activity.date)).where(
+                Activity.account_id == account.id
+            )
+        ).scalar()
+
+        if latest is None:
+            lookback_days = _MAX_LOOKBACK_DAYS
+        else:
+            gap = (datetime.now(timezone.utc).date() - latest).days + 2
+            lookback_days = max(_MIN_LOOKBACK_DAYS, min(gap, _MAX_LOOKBACK_DAYS))
+
+        since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        logger.info(
+            "Activity sync for account %s: lookback=%d days",
+            account.id, lookback_days,
+        )
         api_secret = decrypt_secret(account.api_secret_enc)
 
         resp = httpx.get(

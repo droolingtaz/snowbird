@@ -10,7 +10,10 @@ from sqlalchemy import select
 
 from app.models.activity import Activity
 from app.models.snapshot import PortfolioSnapshot
-from app.services.sync import _sync_activities, _backfill_snapshots, sync_account
+from app.services.sync import (
+    _sync_activities, _backfill_snapshots, sync_account,
+    _MIN_LOOKBACK_DAYS, _MAX_LOOKBACK_DAYS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -488,3 +491,108 @@ class TestSyncAccountBackfillIntegration:
 
         # httpx.get called once for activities only (no backfill)
         assert mock_httpx_get.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Dynamic activity lookback
+# ---------------------------------------------------------------------------
+
+class TestDynamicActivityLookback:
+    """_sync_activities computes lookback from the most recent stored activity."""
+
+    def _extract_after_param(self, mock_httpx_get) -> str:
+        """Pull the 'after' query param from the httpx.get call."""
+        _, kwargs = mock_httpx_get.call_args
+        return kwargs["params"]["after"]
+
+    def test_first_sync_uses_max_lookback(self, db, demo_account):
+        """No activities in the DB → lookback = _MAX_LOOKBACK_DAYS (90)."""
+        fake_resp = _mock_httpx_response([])
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp) as mock_httpx_get:
+            _sync_activities(db, mock_client, demo_account)
+
+        after_str = self._extract_after_param(mock_httpx_get)
+        after_dt = datetime.strptime(after_str, "%Y-%m-%dT%H:%M:%SZ")
+        expected = datetime.now(timezone.utc) - timedelta(days=_MAX_LOOKBACK_DAYS)
+        # Allow 60 seconds of clock drift
+        assert abs((after_dt - expected.replace(tzinfo=None)).total_seconds()) < 60
+
+    def test_recent_activity_uses_min_lookback(self, db, demo_account):
+        """Most recent activity is 5 days ago → gap+2=7 → clamped to MIN (7)."""
+        recent_date = date.today() - timedelta(days=5)
+        act = Activity(
+            account_id=demo_account.id,
+            alpaca_id="recent-001",
+            activity_type="DIV",
+            symbol="AAPL",
+            net_amount=Decimal("1.00"),
+            date=recent_date,
+            raw={},
+        )
+        db.add(act)
+        db.flush()
+
+        fake_resp = _mock_httpx_response([])
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp) as mock_httpx_get:
+            _sync_activities(db, mock_client, demo_account)
+
+        after_str = self._extract_after_param(mock_httpx_get)
+        after_dt = datetime.strptime(after_str, "%Y-%m-%dT%H:%M:%SZ")
+        expected = datetime.now(timezone.utc) - timedelta(days=_MIN_LOOKBACK_DAYS)
+        assert abs((after_dt - expected.replace(tzinfo=None)).total_seconds()) < 60
+
+    def test_30day_gap_uses_gap_plus_margin(self, db, demo_account):
+        """Most recent activity is 30 days ago → gap+2=32 days lookback."""
+        old_date = date.today() - timedelta(days=30)
+        act = Activity(
+            account_id=demo_account.id,
+            alpaca_id="gap-001",
+            activity_type="FILL",
+            symbol="TSLA",
+            net_amount=Decimal("0"),
+            date=old_date,
+            raw={},
+        )
+        db.add(act)
+        db.flush()
+
+        fake_resp = _mock_httpx_response([])
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp) as mock_httpx_get:
+            _sync_activities(db, mock_client, demo_account)
+
+        after_str = self._extract_after_param(mock_httpx_get)
+        after_dt = datetime.strptime(after_str, "%Y-%m-%dT%H:%M:%SZ")
+        expected = datetime.now(timezone.utc) - timedelta(days=32)
+        assert abs((after_dt - expected.replace(tzinfo=None)).total_seconds()) < 60
+
+    def test_200day_gap_capped_at_max(self, db, demo_account):
+        """Most recent activity is 200 days ago → gap+2=202 → clamped to MAX (90)."""
+        ancient_date = date.today() - timedelta(days=200)
+        act = Activity(
+            account_id=demo_account.id,
+            alpaca_id="ancient-001",
+            activity_type="DIV",
+            symbol="VTI",
+            net_amount=Decimal("5.00"),
+            date=ancient_date,
+            raw={},
+        )
+        db.add(act)
+        db.flush()
+
+        fake_resp = _mock_httpx_response([])
+        mock_client = MagicMock()
+
+        with patch("httpx.get", return_value=fake_resp) as mock_httpx_get:
+            _sync_activities(db, mock_client, demo_account)
+
+        after_str = self._extract_after_param(mock_httpx_get)
+        after_dt = datetime.strptime(after_str, "%Y-%m-%dT%H:%M:%SZ")
+        expected = datetime.now(timezone.utc) - timedelta(days=_MAX_LOOKBACK_DAYS)
+        assert abs((after_dt - expected.replace(tzinfo=None)).total_seconds()) < 60
