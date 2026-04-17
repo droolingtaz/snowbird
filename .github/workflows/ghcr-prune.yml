@@ -1,0 +1,33 @@
+name: Prune old GHCR images
+
+on:
+  schedule:
+    - cron: "0 2 * * 0" # Sunday 2:00 AM UTC
+  workflow_dispatch:
+
+jobs:
+  prune:
+    name: Prune old container images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune snowbird-backend
+        uses: snok/container-retention-policy@v3
+        with:
+          account: user
+          token: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+          image-names: snowbird-backend
+          image-tags: "!latest"
+          tag-selection: both
+          cut-off: 2w
+          keep-n-most-recent: 10
+
+      - name: Prune snowbird-frontend
+        uses: snok/container-retention-policy@v3
+        with:
+          account: user
+          token: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+          image-names: snowbird-frontend
+          image-tags: "!latest"
+          tag-selection: both
+          cut-off: 2w
+          keep-n-most-recent: 10
