@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 # Import models so their metadata is registered
 from app.db import Base
 from app.models import user, account, instrument, position, order, activity, bucket, snapshot  # noqa: F401
+from app.models import user_goal  # noqa: F401
 
 
 @pytest.fixture()

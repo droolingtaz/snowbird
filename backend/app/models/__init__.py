@@ -6,6 +6,7 @@ from app.models.order import Order
 from app.models.activity import Activity
 from app.models.bucket import Bucket, BucketHolding
 from app.models.snapshot import PortfolioSnapshot
+from app.models.user_goal import UserGoal
 
 __all__ = [
     "User",
@@ -17,4 +18,5 @@ __all__ = [
     "Bucket",
     "BucketHolding",
     "PortfolioSnapshot",
+    "UserGoal",
 ]
