@@ -65,6 +65,44 @@ def get_earnings_calendar(symbol: str, from_date: date, to_date: date) -> List[d
     return []
 
 
+def get_company_profile(symbol: str) -> dict | None:
+    """Fetch company profile from Finnhub (sector, industry, etc.).
+
+    Returns a dict with keys like ``finnhubIndustry``, ``exchange``,
+    ``country``, ``marketCapitalization``, etc.  Returns ``None`` on
+    any error or if the API key is not configured.
+    """
+    if not settings.FINNHUB_API_KEY:
+        logger.debug("FINNHUB_API_KEY not set – skipping profile for %s", symbol)
+        return None
+
+    url = f"{_FINNHUB_BASE}/stock/profile2"
+    params = {"symbol": symbol, "token": settings.FINNHUB_API_KEY}
+    delays = [1, 2, 4]
+    for attempt, delay in enumerate(delays):
+        try:
+            resp = httpx.get(url, params=params, timeout=10.0)
+            if resp.status_code == 429:
+                logger.warning("Finnhub rate limit hit for profile %s, attempt %d", symbol, attempt + 1)
+                time.sleep(delay)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                return None
+            return data
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Finnhub profile HTTP error for %s: %s", symbol, exc)
+            return None
+        except Exception as exc:
+            logger.warning("Finnhub profile request error for %s (attempt %d): %s", symbol, attempt + 1, exc)
+            if attempt < len(delays) - 1:
+                time.sleep(delay)
+                continue
+            return None
+    return None
+
+
 def get_earnings_for_symbols(symbols: list[str], from_date: date, to_date: date) -> list[dict]:
     """Fetch earnings for multiple symbols, rate-limiting between calls."""
     all_earnings: list[dict] = []
