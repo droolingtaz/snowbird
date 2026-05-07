@@ -1,7 +1,10 @@
 """Dividend tracking and forward projections."""
 from __future__ import annotations
 
+import json
+import pathlib
 from datetime import date, timedelta
+from functools import lru_cache
 from typing import List, Optional
 from collections import defaultdict
 
@@ -19,6 +22,20 @@ from app.schemas.dividends import (
 )
 
 DIV_TYPES = ["DIV", "DIVCGL", "DIVCGS", "DIVNRA", "DIVROC", "DIVTXEX"]
+
+_ETF_JSON = pathlib.Path(__file__).resolve().parent.parent / "data" / "etf_classifications.json"
+
+
+@lru_cache(maxsize=1)
+def _load_curated_dividends() -> dict[str, dict]:
+    """Return {symbol: {annual_dps, frequency}} for symbols with curated data."""
+    with open(_ETF_JSON) as f:
+        data = json.load(f)
+    return {
+        sym: {"annual_dps": entry["annual_dps"], "frequency": entry["frequency"]}
+        for sym, entry in data.items()
+        if "annual_dps" in entry and "frequency" in entry
+    }
 
 
 def get_dividend_history(db: Session, account_id: int, year: Optional[int] = None) -> List[DividendHistoryItem]:
@@ -95,6 +112,26 @@ def get_dividends_by_symbol(db: Session, account_id: int) -> List[DividendBySymb
             projected_annual=round(projected_annual, 4) if projected_annual else None,
             current_qty=current_qty,
         ))
+
+    # Fallback: fill gaps for held symbols with no DIV history using curated data
+    symbols_with_history = {r.symbol for r in results}
+    curated = _load_curated_dividends()
+    for symbol, qty in qty_by_symbol.items():
+        if symbol in symbols_with_history or symbol not in curated:
+            continue
+        meta = curated[symbol]
+        annual_dps = meta["annual_dps"]
+        projected_annual = annual_dps * qty if qty > 0 else None
+        results.append(DividendBySymbol(
+            symbol=symbol,
+            total_received=0.0,
+            ytd_received=0.0,
+            annual_dps=annual_dps,
+            frequency=meta["frequency"],
+            projected_annual=round(projected_annual, 4) if projected_annual else None,
+            current_qty=qty,
+        ))
+
     return sorted(results, key=lambda x: x.total_received, reverse=True)
 
 

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from app.models.activity import Activity
 from app.models.position import Position
 from app.services.dividends import (
-    get_dividend_history, get_dividends_by_symbol,
+    get_dividend_history, get_dividends_by_symbol, get_dividend_calendar,
     get_future_payments, get_received_monthly, get_growth_yoy,
 )
 
@@ -171,3 +171,95 @@ def test_future_payments_returns_months(db, demo_account):
         assert m.confirmed >= 0
         assert m.estimated >= 0
         assert m.total == pytest.approx(m.confirmed + m.estimated, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Curated dividend fallback
+# ---------------------------------------------------------------------------
+
+def test_curated_fallback_when_no_history(db, demo_account):
+    """Positions in SPYI + QQQI with zero DIV activities → curated fallback rows."""
+    db.add_all([
+        Position(
+            account_id=demo_account.id, symbol="SPYI",
+            qty=Decimal("100"), avg_entry_price=Decimal("50"),
+            market_value=Decimal("5200"), unrealized_pl=Decimal("0"),
+            unrealized_plpc=Decimal("0"), current_price=Decimal("52"),
+        ),
+        Position(
+            account_id=demo_account.id, symbol="QQQI",
+            qty=Decimal("50"), avg_entry_price=Decimal("45"),
+            market_value=Decimal("2400"), unrealized_pl=Decimal("0"),
+            unrealized_plpc=Decimal("0"), current_price=Decimal("48"),
+        ),
+    ])
+    db.commit()
+
+    rows = get_dividends_by_symbol(db, demo_account.id)
+    assert len(rows) == 2
+    by_sym = {r.symbol: r for r in rows}
+
+    spyi = by_sym["SPYI"]
+    assert spyi.annual_dps == pytest.approx(5.40, abs=0.01)
+    assert spyi.frequency == "monthly"
+    assert spyi.total_received == 0.0
+    assert spyi.ytd_received == 0.0
+    assert spyi.current_qty == pytest.approx(100.0)
+    assert spyi.projected_annual == pytest.approx(540.0, abs=0.01)
+
+    qqqi = by_sym["QQQI"]
+    assert qqqi.annual_dps == pytest.approx(8.40, abs=0.01)
+    assert qqqi.frequency == "monthly"
+    assert qqqi.total_received == 0.0
+    assert qqqi.projected_annual == pytest.approx(420.0, abs=0.01)
+
+
+def test_history_takes_precedence_over_curated(db, demo_account):
+    """If historical DIV activities exist, curated values are NOT used."""
+    today = date.today()
+    db.add(Position(
+        account_id=demo_account.id, symbol="SPYI",
+        qty=Decimal("100"), avg_entry_price=Decimal("50"),
+        market_value=Decimal("5200"), unrealized_pl=Decimal("0"),
+        unrealized_plpc=Decimal("0"), current_price=Decimal("52"),
+    ))
+    # Add real dividend history — 3 monthly payments of $45 each
+    for i in range(3):
+        db.add(Activity(
+            account_id=demo_account.id, alpaca_id=f"hist{i}",
+            activity_type="DIV", symbol="SPYI",
+            net_amount=Decimal("45.00"),
+            date=today - timedelta(days=(i + 1) * 30),
+        ))
+    db.commit()
+
+    rows = get_dividends_by_symbol(db, demo_account.id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.symbol == "SPYI"
+    assert row.total_received == pytest.approx(135.0, abs=0.01)
+    # annual_dps derived from history, not curated 5.40
+    assert row.annual_dps == pytest.approx(1.35, abs=0.01)  # 135 / 100 shares
+
+
+def test_calendar_populates_with_curated_only(db, demo_account):
+    """End-to-end: calendar returns items for monthly ETFs via curated fallback."""
+    db.add(Position(
+        account_id=demo_account.id, symbol="SPYI",
+        qty=Decimal("100"), avg_entry_price=Decimal("50"),
+        market_value=Decimal("5200"), unrealized_pl=Decimal("0"),
+        unrealized_plpc=Decimal("0"), current_price=Decimal("52"),
+    ))
+    db.commit()
+
+    today = date.today()
+    items = get_dividend_calendar(
+        db, demo_account.id,
+        from_date=str(today),
+        to_date=str(today + timedelta(days=90)),
+    )
+    assert len(items) > 0
+    # All items should be for SPYI with monthly cadence (~30-day spacing)
+    for item in items:
+        assert item.symbol == "SPYI"
+        assert item.projected_income > 0
