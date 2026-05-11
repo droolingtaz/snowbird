@@ -94,6 +94,11 @@ def _run_sync(full: bool = True, activities_only: bool = False) -> None:
         db.close()
 
 
+# TODO: Add auto-reinvest job that checks DividendReinvestSettings.auto_reinvest_enabled
+# for each account and triggers reinvestment when unreinvested dividend cash exceeds
+# auto_reinvest_threshold. Wire into activity_sync_job or add a dedicated interval job.
+
+
 def start_scheduler() -> None:
     global _scheduler
     if _scheduler is not None:

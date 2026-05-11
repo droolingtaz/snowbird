@@ -7,6 +7,7 @@ from app.models.activity import Activity
 from app.models.bucket import Bucket, BucketHolding
 from app.models.snapshot import PortfolioSnapshot
 from app.models.user_goal import UserGoal
+from app.models.reinvest import DividendReinvestSettings, DividendReinvestRun
 
 __all__ = [
     "User",
@@ -19,4 +20,6 @@ __all__ = [
     "BucketHolding",
     "PortfolioSnapshot",
     "UserGoal",
+    "DividendReinvestSettings",
+    "DividendReinvestRun",
 ]

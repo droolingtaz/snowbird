@@ -437,6 +437,63 @@ export function useUpsertGoal() {
   });
 }
 
+// ── Reinvest ─────────────────────────────────────────────────────────────────
+
+export function useReinvestSettings() {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["reinvest", "settings", accountId],
+    queryFn: () =>
+      api.get("/reinvest/settings", { params: { account_id: accountId } }).then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useUpdateReinvestSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      api.put("/reinvest/settings", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reinvest", "settings"] });
+      qc.invalidateQueries({ queryKey: ["reinvest", "preview"] });
+    },
+  });
+}
+
+export function useReinvestPreview() {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["reinvest", "preview", accountId],
+    queryFn: () =>
+      api.get("/reinvest/preview", { params: { account_id: accountId } }).then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
+export function useExecuteReinvest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { account_id: number; dry_run?: boolean }) =>
+      api.post("/reinvest/execute", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reinvest"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["holdings"] });
+    },
+  });
+}
+
+export function useReinvestHistory(limit: number = 20) {
+  const accountId = useAccountId();
+  return useQuery({
+    queryKey: ["reinvest", "history", accountId, limit],
+    queryFn: () =>
+      api.get("/reinvest/history", { params: { account_id: accountId, limit } }).then((r) => r.data),
+    enabled: !!accountId,
+  });
+}
+
 export function useGoalProjection() {
   const accountId = useAccountId();
   return useQuery({

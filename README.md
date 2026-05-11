@@ -42,6 +42,14 @@ Self-hosted portfolio analytics and paper-trading dashboard built on [Alpaca Mar
 - Income goal — set an annual passive-income target with assumed growth rate and monthly contributions
 - Equity projection chart (30-year forward) with progress ring and ETA
 
+### Dividend reinvestment
+- One-click reinvestment of accumulated dividend cash
+- Configurable tax withholding rate (default 24%) — tax portion buys a tax-reserve ETF (default CSHI)
+- Remainder distributed across existing bucket targets using the drift-aware rebalance engine
+- Dedicated "Tax Reserve" bucket auto-created per account (excluded from regular drift math)
+- Full audit trail of every reinvestment run (preview, executed, or failed) with order details
+- Settings panel: adjust tax rate, tax-reserve symbol, and auto-reinvest toggle (auto-trigger deferred to a future release)
+
 ### Background jobs
 
 | Job | Schedule | Description |

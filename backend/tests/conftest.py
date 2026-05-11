@@ -24,6 +24,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.models import user, account, instrument, position, order, activity, bucket, snapshot  # noqa: F401
 from app.models import user_goal  # noqa: F401
+from app.models import reinvest  # noqa: F401
 
 
 @pytest.fixture()

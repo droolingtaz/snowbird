@@ -10,6 +10,7 @@ import PerformanceChart from "../components/PerformanceChart";
 import AllocationDonut from "../components/AllocationDonut";
 import UpcomingEventsCard from "../components/UpcomingEventsCard";
 import IncomeGoalCard from "../components/IncomeGoalCard";
+import ReinvestCard from "../components/ReinvestCard";
 import { clsx } from "clsx";
 import { format, addDays } from "date-fns";
 
@@ -151,8 +152,8 @@ export default function Dashboard() {
         <UpcomingEventsCard />
       </div>
 
-      {/* Bottom row: Upcoming Dividends + Income Goal */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {/* Bottom row: Upcoming Dividends + Reinvest + Income Goal */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Upcoming dividends */}
         <Card title="Upcoming Dividends">
           {divCalendar.length === 0 ? (
@@ -173,6 +174,9 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
+
+        {/* Dividend Reinvestment */}
+        <ReinvestCard />
 
         {/* Income Goal + ETA */}
         <IncomeGoalCard />
