@@ -71,12 +71,15 @@ def compute_rebalance(
     cash_to_deploy: float,
     fractional: bool,
     account,  # AlpacaAccount for price lookup
+    exclude_bucket_ids: Optional[set] = None,
 ) -> RebalancePreview:
     from app.services.market_data import get_quote_cached
 
-    buckets = db.execute(
+    all_buckets = db.execute(
         select(Bucket).where(Bucket.account_id == account_id)
     ).scalars().all()
+
+    buckets = [b for b in all_buckets if not exclude_bucket_ids or b.id not in exclude_bucket_ids]
 
     positions = db.execute(
         select(Position).where(Position.account_id == account_id)

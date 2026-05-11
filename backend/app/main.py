@@ -13,6 +13,7 @@ from app.api.buckets import router as buckets_router
 from app.api.market import router as market_router
 from app.api.events import router as events_router
 from app.api.goals import router as goals_router
+from app.api.reinvest import router as reinvest_router
 
 
 @asynccontextmanager
@@ -53,6 +54,7 @@ app.include_router(buckets_router, prefix="/api")
 app.include_router(market_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(goals_router, prefix="/api")
+app.include_router(reinvest_router, prefix="/api")
 
 
 @app.get("/api/health")
