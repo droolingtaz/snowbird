@@ -12,6 +12,15 @@ function pct(n?: number | null) {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 }
 
+function getHeatmapStyle(val: number): { backgroundColor: string; color: string } {
+  const abs = Math.abs(val * 100);
+  if (abs < 0.05) return { backgroundColor: "transparent", color: "#8b9ab0" };
+  const alpha = abs < 2 ? 0.10 : abs < 5 ? 0.20 : abs < 10 ? 0.35 : 0.50;
+  return val > 0
+    ? { backgroundColor: `rgba(34,197,94,${alpha})`, color: "#4ade80" }
+    : { backgroundColor: `rgba(239,68,68,${alpha})`, color: "#f87171" };
+}
+
 function MonthlyHeatmap({ data }: { data: Array<{ year: number; month: number; return_pct?: number | null }> }) {
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const years = [...new Set(data.map((d) => d.year))].sort();
@@ -36,22 +45,16 @@ function MonthlyHeatmap({ data }: { data: Array<{ year: number; month: number; r
               {months.map((_, mi) => {
                 const cell = data.find((d) => d.year === year && d.month === mi + 1);
                 const val = cell?.return_pct;
-                const intensity = val != null ? Math.min(Math.abs(val) * 400, 0.8) : 0;
+                const style = val != null ? getHeatmapStyle(val) : undefined;
                 return (
                   <td
                     key={mi}
                     className="px-1 py-1 text-center rounded"
-                    style={{
-                      background: val == null
-                        ? "transparent"
-                        : val >= 0
-                          ? `rgba(34,197,94,${intensity})`
-                          : `rgba(239,68,68,${intensity})`,
-                    }}
+                    style={style ? { background: style.backgroundColor } : undefined}
                     title={val != null ? `${pct(val)}` : "No data"}
                   >
                     {val != null ? (
-                      <span className={clsx("mono text-2xs", val >= 0 ? "text-green-profit" : "text-red-loss")}>
+                      <span className="mono text-2xs" style={{ color: style!.color }}>
                         {(val * 100).toFixed(1)}%
                       </span>
                     ) : (
