@@ -24,6 +24,8 @@ Self-hosted portfolio analytics and paper-trading dashboard built on [Alpaca Mar
 - Received dividends by month (trailing 12 months)
 - Year-over-year dividend growth (grouped bars, current year + N-1 prior years)
 - Dividend calendar with pay dates and projected income
+- Curated dividend metadata fallback — forward-looking widgets (upcoming dividends, future-payments chart, upcoming events) populate even before first DIV activity using curated `annual_dps` and `frequency` from the ETF classification map (historical data always takes precedence)
+- Dividend tax type per holding on the Holdings tab — Ordinary, Qualified, Section 1256 (60/40), Return of Capital, MLP K-1, Treasury (state-exempt), and mixed variants with hover tooltip for details
 
 ### Dashboard KPI tiles
 - IRR (Internal Rate of Return) — XIRR via `pyxirr`, supports 1Y / ALL / 3M / 1M periods
@@ -216,7 +218,7 @@ npm run dev  # http://localhost:5173
 
 Instrument metadata (sector, asset class, ETF category) is populated by the nightly instrument refresh job and follows a tiered lookup strategy:
 
-1. **Curated ETF map** — `backend/app/data/etf_classifications.json` contains deterministic metadata for known ETF symbols. Loaded once via `@lru_cache`. Symbols found here get `is_etf`, `asset_class`, `etf_category`, `sector`, and `name` written directly — no external API calls.
+1. **Curated ETF map** — `backend/app/data/etf_classifications.json` contains deterministic metadata for known ETF symbols. Loaded once via `@lru_cache`. Symbols found here get `is_etf`, `asset_class`, `etf_category`, `sector`, `name`, `annual_dps`, `frequency`, `dividend_tax_type`, and `dividend_tax_notes` written directly — no external API calls. Dividend fields power forward-looking widgets before any historical DIV activity exists; tax fields populate the Holdings tab "Tax Type" column.
 
 2. **yfinance fallback** — Unknown symbols are classified via `yf.Ticker(symbol).info` with Redis caching (24h TTL). Calls are throttled at 7s per call (configurable) with exponential backoff on 429s (30s base, 2x multiplier, 600s max, up to 5 retries with 0–5s random jitter).
 
@@ -227,6 +229,22 @@ Manual backfill:
 ```bash
 docker compose exec backend python -m app.tasks.refresh_instruments
 ```
+
+---
+
+## API endpoints (selected)
+
+Core portfolio, account, and sync endpoints are omitted for brevity. Notable additions:
+
+### Dividend reinvestment (`/api/reinvest`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/reinvest/settings` | Current reinvestment settings for the active account |
+| `PUT` | `/api/reinvest/settings` | Update tax rate, tax-reserve symbol, auto-reinvest toggle |
+| `GET` | `/api/reinvest/preview` | Dry-run preview — shows proposed orders without executing |
+| `POST` | `/api/reinvest/execute` | Execute reinvestment (creates orders via Alpaca) |
+| `GET` | `/api/reinvest/history` | Audit trail of past reinvestment runs |
 
 ---
 
@@ -270,7 +288,7 @@ For full deployment setup (VM provisioning, runner setup, systemd units, sudoers
 
 ---
 
-## Recent changelog (PRs #15–#30)
+## Recent changelog (PRs #15–#34)
 
 | PR | Title |
 |----|-------|
@@ -290,3 +308,7 @@ For full deployment setup (VM provisioning, runner setup, systemd units, sudoers
 | [#28](https://github.com/droolingtaz/snowbird/pull/28) | Fix today_pl/total_pl always returning 0 (AttributeError on `equity_previous_close`) |
 | [#29](https://github.com/droolingtaz/snowbird/pull/29) | Curated ETF classification map (bypass yfinance/Finnhub for known symbols) |
 | [#30](https://github.com/droolingtaz/snowbird/pull/30) | SF Pro / Apple system font stack app-wide |
+| [#31](https://github.com/droolingtaz/snowbird/pull/31) | README refresh (PRs #15–#30) |
+| [#32](https://github.com/droolingtaz/snowbird/pull/32) | Curated dividend metadata fallback for forward-looking widgets |
+| [#33](https://github.com/droolingtaz/snowbird/pull/33) | Dividend reinvestment with CSHI tax reserve + bucket-target distribution |
+| [#34](https://github.com/droolingtaz/snowbird/pull/34) | Dividend tax type column on Holdings tab |
