@@ -31,16 +31,16 @@ def upgrade() -> None:
 
     # 4. Add FK and index for user_id
     op.create_foreign_key(
-        "fk_buckets_user_id", "buckets", "users", ["user_id"], ["id"],
+        "buckets_user_id_fkey", "buckets", "users", ["user_id"], ["id"],
         ondelete="CASCADE",
     )
     op.create_index("ix_buckets_user_id", "buckets", ["user_id"])
 
     # 5. Drop old account_id FK (CASCADE), re-create as SET NULL with nullable column
-    op.drop_constraint("fk_buckets_account_id", "buckets", type_="foreignkey")
+    op.drop_constraint("buckets_account_id_fkey", "buckets", type_="foreignkey")
     op.alter_column("buckets", "account_id", nullable=True)
     op.create_foreign_key(
-        "fk_buckets_account_id", "buckets", "alpaca_accounts",
+        "buckets_account_id_fkey", "buckets", "alpaca_accounts",
         ["account_id"], ["id"], ondelete="SET NULL",
     )
 
@@ -61,43 +61,26 @@ def upgrade() -> None:
 
     # 4. FK + index
     op.create_foreign_key(
-        "fk_bucket_holdings_user_id", "bucket_holdings", "users",
+        "bucket_holdings_user_id_fkey", "bucket_holdings", "users",
         ["user_id"], ["id"], ondelete="CASCADE",
     )
     op.create_index("ix_bucket_holdings_user_id", "bucket_holdings", ["user_id"])
 
-    # 5. Add nullable account_id with SET NULL FK (mirror from bucket for easy queries)
-    op.add_column("bucket_holdings", sa.Column("account_id", sa.Integer(), nullable=True))
-    op.execute(
-        "UPDATE bucket_holdings SET account_id = ("
-        "  SELECT b.account_id FROM buckets b WHERE b.id = bucket_holdings.bucket_id"
-        ")"
-    )
-    op.create_foreign_key(
-        "fk_bucket_holdings_account_id", "bucket_holdings", "alpaca_accounts",
-        ["account_id"], ["id"], ondelete="SET NULL",
-    )
-    op.create_index("ix_bucket_holdings_account_id", "bucket_holdings", ["account_id"])
-
 
 def downgrade() -> None:
-    # --- bucket_holdings: remove account_id, user_id ---
-    op.drop_constraint("fk_bucket_holdings_account_id", "bucket_holdings", type_="foreignkey")
-    op.drop_index("ix_bucket_holdings_account_id", table_name="bucket_holdings")
-    op.drop_column("bucket_holdings", "account_id")
-
-    op.drop_constraint("fk_bucket_holdings_user_id", "bucket_holdings", type_="foreignkey")
+    # --- bucket_holdings: remove user_id ---
     op.drop_index("ix_bucket_holdings_user_id", table_name="bucket_holdings")
+    op.drop_constraint("bucket_holdings_user_id_fkey", "bucket_holdings", type_="foreignkey")
     op.drop_column("bucket_holdings", "user_id")
 
     # --- buckets: restore account_id NOT NULL + CASCADE, remove user_id ---
-    op.drop_constraint("fk_buckets_account_id", "buckets", type_="foreignkey")
+    op.drop_constraint("buckets_account_id_fkey", "buckets", type_="foreignkey")
     op.alter_column("buckets", "account_id", nullable=False)
     op.create_foreign_key(
-        "fk_buckets_account_id", "buckets", "alpaca_accounts",
+        "buckets_account_id_fkey", "buckets", "alpaca_accounts",
         ["account_id"], ["id"], ondelete="CASCADE",
     )
 
-    op.drop_constraint("fk_buckets_user_id", "buckets", type_="foreignkey")
     op.drop_index("ix_buckets_user_id", table_name="buckets")
+    op.drop_constraint("buckets_user_id_fkey", "buckets", type_="foreignkey")
     op.drop_column("buckets", "user_id")

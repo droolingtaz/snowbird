@@ -106,7 +106,6 @@ def create_bucket(body: BucketCreate, current_user: CurrentUser, db: DbSession):
         holding = BucketHolding(
             bucket_id=bucket.id,
             user_id=current_user.id,
-            account_id=body.account_id,
             symbol=h.symbol,
             target_weight_within_bucket_pct=h.target_weight_within_bucket_pct,
         )
@@ -146,7 +145,6 @@ def update_bucket(bucket_id: int, body: BucketUpdate, current_user: CurrentUser,
             holding = BucketHolding(
                 bucket_id=bucket.id,
                 user_id=current_user.id,
-                account_id=bucket.account_id,
                 symbol=h.symbol,
                 target_weight_within_bucket_pct=h.target_weight_within_bucket_pct,
             )
@@ -182,8 +180,6 @@ def link_bucket(bucket_id: int, body: BucketLink, current_user: CurrentUser, db:
         _get_account(db, current_user.id, body.account_id)
 
     bucket.account_id = body.account_id
-    for h in bucket.holdings:
-        h.account_id = body.account_id
     db.commit()
     db.refresh(bucket)
 

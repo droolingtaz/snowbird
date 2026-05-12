@@ -41,10 +41,10 @@ def test_bucket_with_holdings(db, demo_account):
     db.add(b); db.flush()
     db.add_all([
         BucketHolding(bucket_id=b.id, user_id=demo_account.user_id,
-                      account_id=demo_account.id, symbol="VTI",
+                      symbol="VTI",
                       target_weight_within_bucket_pct=Decimal("70")),
         BucketHolding(bucket_id=b.id, user_id=demo_account.user_id,
-                      account_id=demo_account.id, symbol="VXUS",
+                      symbol="VXUS",
                       target_weight_within_bucket_pct=Decimal("30")),
     ])
     db.commit()

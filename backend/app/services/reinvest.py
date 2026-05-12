@@ -102,7 +102,6 @@ def ensure_tax_reserve_bucket(
         holding = BucketHolding(
             bucket_id=bucket.id,
             user_id=user_id,
-            account_id=account_id,
             symbol=symbol,
             target_weight_within_bucket_pct=Decimal(100),
         )
