@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List
 
 from app.deps import CurrentUser, DbSession
 from app.models.account import AlpacaAccount, AccountMode
+from app.models.bucket import Bucket
 from app.schemas.account import AccountCreate, AccountOut, AccountTestResult
 from app.security import encrypt_secret
 from app.services.alpaca import get_base_url
@@ -48,11 +49,20 @@ def create_account(body: AccountCreate, current_user: CurrentUser, db: DbSession
     return acct
 
 
-@router.delete("/{account_id}", status_code=204)
+@router.delete("/{account_id}")
 def delete_account(account_id: int, current_user: CurrentUser, db: DbSession):
     acct = _get_account_or_404(db, current_user.id, account_id)
+    unlinked_count = db.execute(
+        select(func.count()).select_from(Bucket).where(
+            Bucket.account_id == account_id,
+        )
+    ).scalar() or 0
     db.delete(acct)
     db.commit()
+    return {
+        "status": "deleted",
+        "unlinked_bucket_count": unlinked_count,
+    }
 
 
 @router.post("/{account_id}/test", response_model=AccountTestResult)

@@ -71,7 +71,7 @@ def update_settings(body: ReinvestSettingsUpdate, current_user: CurrentUser, db:
 def preview(account_id: int, current_user: CurrentUser, db: DbSession):
     acct = _get_account(db, current_user.id, account_id)
     settings = get_or_create_settings(db, account_id)
-    ensure_tax_reserve_bucket(db, account_id, symbol=settings.tax_reserve_symbol)
+    ensure_tax_reserve_bucket(db, account_id, symbol=settings.tax_reserve_symbol, user_id=current_user.id)
     dividend_cash = get_unreinvested_dividend_cash(db, account_id)
     return compute_reinvest_plan(db, account_id, dividend_cash, settings, acct)
 
@@ -82,7 +82,7 @@ def preview(account_id: int, current_user: CurrentUser, db: DbSession):
 def execute(body: ReinvestExecuteRequest, current_user: CurrentUser, db: DbSession):
     acct = _get_account(db, current_user.id, body.account_id)
     settings = get_or_create_settings(db, body.account_id)
-    ensure_tax_reserve_bucket(db, body.account_id, symbol=settings.tax_reserve_symbol)
+    ensure_tax_reserve_bucket(db, body.account_id, symbol=settings.tax_reserve_symbol, user_id=current_user.id)
     dividend_cash = get_unreinvested_dividend_cash(db, body.account_id)
 
     if dividend_cash <= 0:

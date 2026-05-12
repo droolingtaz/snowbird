@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 
 from app.deps import CurrentUser, DbSession
 from app.models.account import AlpacaAccount
 from app.models.bucket import Bucket, BucketHolding
 from app.schemas.buckets import (
-    BucketCreate, BucketUpdate, BucketOut, BucketDrift,
+    BucketCreate, BucketUpdate, BucketOut, BucketDrift, BucketLink,
     RebalancePreview, RebalanceExecuteRequest, RebalanceExecuteResult,
 )
 from app.services.buckets import compute_drift, compute_rebalance
@@ -28,28 +28,50 @@ def _get_account(db, user_id: int, account_id: int) -> AlpacaAccount:
     return acct
 
 
-@router.get("", response_model=List[BucketOut])
-def list_buckets(account_id: int, current_user: CurrentUser, db: DbSession):
-    _get_account(db, current_user.id, account_id)
-    buckets = db.execute(
-        select(Bucket).where(Bucket.account_id == account_id)
-    ).scalars().all()
+def _get_user_bucket(db, user_id: int, bucket_id: int) -> Bucket:
+    bucket = db.execute(
+        select(Bucket).where(Bucket.id == bucket_id, Bucket.user_id == user_id)
+    ).scalar_one_or_none()
+    if not bucket:
+        raise HTTPException(status_code=404, detail="Bucket not found")
+    return bucket
 
-    # Compute actual weights
+
+@router.get("", response_model=List[BucketOut])
+def list_buckets(
+    current_user: CurrentUser,
+    db: DbSession,
+    account_id: Optional[int] = Query(default=None),
+):
+    query = select(Bucket).where(Bucket.user_id == current_user.id)
+    if account_id is not None:
+        _get_account(db, current_user.id, account_id)
+        query = query.where(Bucket.account_id == account_id)
+
+    buckets = db.execute(query).scalars().all()
+
+    # Compute actual weights when an account is linked
     from app.models.position import Position
-    positions = db.execute(select(Position).where(Position.account_id == account_id)).scalars().all()
-    total_mv = sum(float(p.market_value or 0) for p in positions)
-    mv_by_symbol = {p.symbol: float(p.market_value or 0) for p in positions}
 
     results = []
     for b in buckets:
-        actual_value = sum(mv_by_symbol.get(h.symbol, 0.0) for h in b.holdings)
-        actual_pct = actual_value / total_mv * 100 if total_mv > 0 else 0.0
-        drift = actual_pct - float(b.target_weight_pct)
+        actual_pct = 0.0
+        drift = 0.0
+        if b.account_id is not None:
+            positions = db.execute(
+                select(Position).where(Position.account_id == b.account_id)
+            ).scalars().all()
+            total_mv = sum(float(p.market_value or 0) for p in positions)
+            mv_by_symbol = {p.symbol: float(p.market_value or 0) for p in positions}
+            actual_value = sum(mv_by_symbol.get(h.symbol, 0.0) for h in b.holdings)
+            actual_pct = actual_value / total_mv * 100 if total_mv > 0 else 0.0
+            drift = actual_pct - float(b.target_weight_pct)
 
         out = BucketOut(
             id=b.id,
+            user_id=b.user_id,
             account_id=b.account_id,
+            linked=b.account_id is not None,
             name=b.name,
             target_weight_pct=float(b.target_weight_pct),
             color=b.color,
@@ -67,8 +89,11 @@ def list_buckets(account_id: int, current_user: CurrentUser, db: DbSession):
 
 @router.post("", response_model=BucketOut, status_code=201)
 def create_bucket(body: BucketCreate, current_user: CurrentUser, db: DbSession):
-    _get_account(db, current_user.id, body.account_id)
+    if body.account_id is not None:
+        _get_account(db, current_user.id, body.account_id)
+
     bucket = Bucket(
+        user_id=current_user.id,
         account_id=body.account_id,
         name=body.name,
         target_weight_pct=body.target_weight_pct,
@@ -80,6 +105,8 @@ def create_bucket(body: BucketCreate, current_user: CurrentUser, db: DbSession):
     for h in body.holdings:
         holding = BucketHolding(
             bucket_id=bucket.id,
+            user_id=current_user.id,
+            account_id=body.account_id,
             symbol=h.symbol,
             target_weight_within_bucket_pct=h.target_weight_within_bucket_pct,
         )
@@ -87,19 +114,21 @@ def create_bucket(body: BucketCreate, current_user: CurrentUser, db: DbSession):
     db.commit()
     db.refresh(bucket)
     return BucketOut(
-        id=bucket.id, account_id=bucket.account_id,
-        name=bucket.name, target_weight_pct=float(bucket.target_weight_pct),
-        color=bucket.color, notes=bucket.notes,
+        id=bucket.id,
+        user_id=bucket.user_id,
+        account_id=bucket.account_id,
+        linked=bucket.account_id is not None,
+        name=bucket.name,
+        target_weight_pct=float(bucket.target_weight_pct),
+        color=bucket.color,
+        notes=bucket.notes,
         holdings=[{"id": h.id, "symbol": h.symbol, "target_weight_within_bucket_pct": float(h.target_weight_within_bucket_pct)} for h in bucket.holdings],
     )
 
 
 @router.put("/{bucket_id}", response_model=BucketOut)
 def update_bucket(bucket_id: int, body: BucketUpdate, current_user: CurrentUser, db: DbSession):
-    bucket = db.execute(select(Bucket).where(Bucket.id == bucket_id)).scalar_one_or_none()
-    if not bucket:
-        raise HTTPException(status_code=404, detail="Bucket not found")
-    _get_account(db, current_user.id, bucket.account_id)
+    bucket = _get_user_bucket(db, current_user.id, bucket_id)
 
     if body.name is not None:
         bucket.name = body.name
@@ -116,6 +145,8 @@ def update_bucket(bucket_id: int, body: BucketUpdate, current_user: CurrentUser,
         for h in body.holdings:
             holding = BucketHolding(
                 bucket_id=bucket.id,
+                user_id=current_user.id,
+                account_id=bucket.account_id,
                 symbol=h.symbol,
                 target_weight_within_bucket_pct=h.target_weight_within_bucket_pct,
             )
@@ -124,21 +155,49 @@ def update_bucket(bucket_id: int, body: BucketUpdate, current_user: CurrentUser,
     db.commit()
     db.refresh(bucket)
     return BucketOut(
-        id=bucket.id, account_id=bucket.account_id,
-        name=bucket.name, target_weight_pct=float(bucket.target_weight_pct),
-        color=bucket.color, notes=bucket.notes,
+        id=bucket.id,
+        user_id=bucket.user_id,
+        account_id=bucket.account_id,
+        linked=bucket.account_id is not None,
+        name=bucket.name,
+        target_weight_pct=float(bucket.target_weight_pct),
+        color=bucket.color,
+        notes=bucket.notes,
         holdings=[{"id": h.id, "symbol": h.symbol, "target_weight_within_bucket_pct": float(h.target_weight_within_bucket_pct)} for h in bucket.holdings],
     )
 
 
 @router.delete("/{bucket_id}", status_code=204)
 def delete_bucket(bucket_id: int, current_user: CurrentUser, db: DbSession):
-    bucket = db.execute(select(Bucket).where(Bucket.id == bucket_id)).scalar_one_or_none()
-    if not bucket:
-        raise HTTPException(status_code=404, detail="Bucket not found")
-    _get_account(db, current_user.id, bucket.account_id)
+    bucket = _get_user_bucket(db, current_user.id, bucket_id)
     db.delete(bucket)
     db.commit()
+
+
+@router.patch("/{bucket_id}/link", response_model=BucketOut)
+def link_bucket(bucket_id: int, body: BucketLink, current_user: CurrentUser, db: DbSession):
+    bucket = _get_user_bucket(db, current_user.id, bucket_id)
+
+    if body.account_id is not None:
+        _get_account(db, current_user.id, body.account_id)
+
+    bucket.account_id = body.account_id
+    for h in bucket.holdings:
+        h.account_id = body.account_id
+    db.commit()
+    db.refresh(bucket)
+
+    return BucketOut(
+        id=bucket.id,
+        user_id=bucket.user_id,
+        account_id=bucket.account_id,
+        linked=bucket.account_id is not None,
+        name=bucket.name,
+        target_weight_pct=float(bucket.target_weight_pct),
+        color=bucket.color,
+        notes=bucket.notes,
+        holdings=[{"id": h.id, "symbol": h.symbol, "target_weight_within_bucket_pct": float(h.target_weight_within_bucket_pct)} for h in bucket.holdings],
+    )
 
 
 @router.get("/drift", response_model=List[BucketDrift])

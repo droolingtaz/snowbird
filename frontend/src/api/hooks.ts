@@ -303,13 +303,12 @@ export function useMovers(limit: number = 5) {
 
 // ── Buckets ───────────────────────────────────────────────────────────────────
 
-export function useBuckets() {
-  const accountId = useAccountId();
+export function useBuckets(filterAccountId?: number | null) {
+  const params: Record<string, unknown> = {};
+  if (filterAccountId) params.account_id = filterAccountId;
   return useQuery({
-    queryKey: ["buckets", accountId],
-    queryFn: () =>
-      api.get("/buckets", { params: { account_id: accountId } }).then((r) => r.data),
-    enabled: !!accountId,
+    queryKey: ["buckets", filterAccountId ?? "all"],
+    queryFn: () => api.get("/buckets", { params }).then((r) => r.data),
   });
 }
 
@@ -357,6 +356,15 @@ export function useDeleteBucket() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.delete(`/buckets/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buckets"] }),
+  });
+}
+
+export function useLinkBucket() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, account_id }: { id: number; account_id: number | null }) =>
+      api.patch(`/buckets/${id}/link`, { account_id }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buckets"] }),
   });
 }

@@ -45,6 +45,12 @@ Self-hosted portfolio analytics and paper-trading dashboard built on [Alpaca Mar
 - Income goal — set an annual passive-income target with assumed growth rate and monthly contributions
 - Equity projection chart (30-year forward) with progress ring and ETA
 
+### Bucket management
+- Buckets are user-owned and survive Alpaca account changes
+- Deleting an account unlinks its buckets (sets `account_id` to null) instead of deleting them
+- Unlinked buckets can be relinked to any of your active accounts from the Buckets page
+- Rebalance requires a linked account — unlinked buckets show an "Unlinked" badge and disable the rebalance action
+
 ### Dividend reinvestment
 - One-click reinvestment of accumulated dividend cash
 - Configurable tax withholding rate (default 24%) — tax portion buys a tax-reserve ETF (default CSHI)

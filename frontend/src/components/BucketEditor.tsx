@@ -53,10 +53,8 @@ export default function BucketEditor({ existingBucket, onClose }: BucketEditorPr
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (!accountId) return;
 
-    const data = {
-      account_id: accountId,
+    const data: Record<string, unknown> = {
       name,
       target_weight_pct: parseFloat(targetWeight),
       color,
@@ -66,6 +64,7 @@ export default function BucketEditor({ existingBucket, onClose }: BucketEditorPr
         target_weight_within_bucket_pct: Number(h.target_weight_within_bucket_pct),
       })),
     };
+    if (accountId) data.account_id = accountId;
 
     try {
       if (existingBucket) {
