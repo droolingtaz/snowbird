@@ -497,6 +497,10 @@ def _backfill_sectors(db: Session, symbols: list[str]) -> None:
             inst.etf_category = entry["etf_category"]
             inst.sector = entry["sector"]
             inst.name = entry["name"]
+            if entry.get("dividend_tax_type"):
+                inst.dividend_tax_type = entry["dividend_tax_type"]
+            if entry.get("dividend_tax_notes"):
+                inst.dividend_tax_notes = entry["dividend_tax_notes"]
             inst.updated_at = datetime.now(timezone.utc)
             updated += 1
             logger.info(
@@ -539,6 +543,10 @@ def backfill_all_sectors(db: Session) -> int:
             inst.etf_category = entry["etf_category"]
             inst.sector = entry["sector"]
             inst.name = entry["name"]
+            if entry.get("dividend_tax_type"):
+                inst.dividend_tax_type = entry["dividend_tax_type"]
+            if entry.get("dividend_tax_notes"):
+                inst.dividend_tax_notes = entry["dividend_tax_notes"]
             inst.updated_at = datetime.now(timezone.utc)
             updated += 1
             logger.info(
