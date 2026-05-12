@@ -70,10 +70,10 @@ def _seed_buckets_and_positions(db, account):
 
     db.add_all([
         BucketHolding(bucket_id=equity.id, user_id=user_id,
-                      account_id=account_id, symbol="VTI",
+                      symbol="VTI",
                       target_weight_within_bucket_pct=Decimal("100")),
         BucketHolding(bucket_id=bonds.id, user_id=user_id,
-                      account_id=account_id, symbol="BND",
+                      symbol="BND",
                       target_weight_within_bucket_pct=Decimal("100")),
     ])
     db.commit()

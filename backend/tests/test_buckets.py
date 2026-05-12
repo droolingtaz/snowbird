@@ -36,10 +36,10 @@ def _seed_portfolio(db, account):
 
     db.add_all([
         BucketHolding(bucket_id=equity_bucket.id, user_id=account.user_id,
-                      account_id=account.id, symbol="VTI",
+                      symbol="VTI",
                       target_weight_within_bucket_pct=Decimal("100")),
         BucketHolding(bucket_id=bonds_bucket.id, user_id=account.user_id,
-                      account_id=account.id, symbol="BND",
+                      symbol="BND",
                       target_weight_within_bucket_pct=Decimal("100")),
     ])
     db.commit()
@@ -77,10 +77,10 @@ def test_drift_effective_target_for_multi_holding_bucket(db, demo_account):
     db.add(b); db.flush()
     db.add_all([
         BucketHolding(bucket_id=b.id, user_id=demo_account.user_id,
-                      account_id=demo_account.id, symbol="VTI",
+                      symbol="VTI",
                       target_weight_within_bucket_pct=Decimal("50")),
         BucketHolding(bucket_id=b.id, user_id=demo_account.user_id,
-                      account_id=demo_account.id, symbol="VXUS",
+                      symbol="VXUS",
                       target_weight_within_bucket_pct=Decimal("50")),
     ])
     db.commit()

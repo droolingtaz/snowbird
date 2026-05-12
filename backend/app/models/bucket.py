@@ -30,7 +30,6 @@ class BucketHolding(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     bucket_id: Mapped[int] = mapped_column(ForeignKey("buckets.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("alpaca_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     target_weight_within_bucket_pct: Mapped[Decimal] = mapped_column(Numeric(9, 4), nullable=False)
 

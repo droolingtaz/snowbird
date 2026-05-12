@@ -65,7 +65,7 @@ def test_bucket_survives_account_delete(db, user_with_two_accounts):
     db.flush()
 
     holding = BucketHolding(
-        bucket_id=bucket.id, user_id=user.id, account_id=acct1.id,
+        bucket_id=bucket.id, user_id=user.id,
         symbol="VTI", target_weight_within_bucket_pct=Decimal("100"),
     )
     db.add(holding)
@@ -96,11 +96,11 @@ def test_bucket_holdings_survive_account_delete(db, user_with_two_accounts):
     db.flush()
 
     h1 = BucketHolding(
-        bucket_id=bucket.id, user_id=user.id, account_id=acct1.id,
+        bucket_id=bucket.id, user_id=user.id,
         symbol="BND", target_weight_within_bucket_pct=Decimal("50"),
     )
     h2 = BucketHolding(
-        bucket_id=bucket.id, user_id=user.id, account_id=acct1.id,
+        bucket_id=bucket.id, user_id=user.id,
         symbol="AGG", target_weight_within_bucket_pct=Decimal("50"),
     )
     db.add_all([h1, h2])
@@ -116,7 +116,6 @@ def test_bucket_holdings_survive_account_delete(db, user_with_two_accounts):
     symbols = {h.symbol for h in reloaded.holdings}
     assert symbols == {"BND", "AGG"}
     for h in reloaded.holdings:
-        assert h.account_id is None
         assert h.user_id == user.id
 
 
@@ -132,7 +131,7 @@ def test_relink_bucket_to_new_account(db, user_with_two_accounts):
     db.flush()
 
     h = BucketHolding(
-        bucket_id=bucket.id, user_id=user.id, account_id=acct1.id,
+        bucket_id=bucket.id, user_id=user.id,
         symbol="VTI", target_weight_within_bucket_pct=Decimal("100"),
     )
     db.add(h)
@@ -140,13 +139,10 @@ def test_relink_bucket_to_new_account(db, user_with_two_accounts):
 
     # Relink to acct2
     bucket.account_id = acct2.id
-    for holding in bucket.holdings:
-        holding.account_id = acct2.id
     db.commit()
 
     db.refresh(bucket)
     assert bucket.account_id == acct2.id
-    assert bucket.holdings[0].account_id == acct2.id
 
 
 def test_relink_validates_ownership(db, user_with_two_accounts, another_user):
@@ -189,7 +185,7 @@ def test_delete_user_cascades_buckets(db):
     db.flush()
 
     h = BucketHolding(
-        bucket_id=bucket.id, user_id=u.id, account_id=acct.id,
+        bucket_id=bucket.id, user_id=u.id,
         symbol="VTI", target_weight_within_bucket_pct=Decimal("100"),
     )
     db.add(h)
@@ -217,7 +213,7 @@ def test_unlinked_bucket_has_no_drift(db, user_with_two_accounts):
     db.flush()
 
     h = BucketHolding(
-        bucket_id=bucket.id, user_id=user.id, account_id=None,
+        bucket_id=bucket.id, user_id=user.id,
         symbol="VTI", target_weight_within_bucket_pct=Decimal("100"),
     )
     db.add(h)
