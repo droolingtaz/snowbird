@@ -1,6 +1,7 @@
 """Portfolio analytics: TWR, CAGR, Sharpe, drawdown, benchmark, IRR, income, movers."""
 from __future__ import annotations
 
+import calendar
 import logging
 import math
 import statistics
@@ -40,6 +41,29 @@ def get_snapshots(db: Session, account_id: int, days: int) -> List[PortfolioSnap
         .where(PortfolioSnapshot.account_id == account_id, PortfolioSnapshot.date >= since)
         .order_by(PortfolioSnapshot.date)
     ).scalars().all()
+
+
+# External cash flows for Modified Dietz (deposits/withdrawals only — NOT dividends, trades, etc.)
+EXTERNAL_FLOW_TYPES = {"CSD", "CSW", "JNLC", "ACATC"}
+
+
+def _get_external_flows_in_range(
+    db: Session, account_id: int, start_date: date, end_date: date,
+) -> list[tuple[date, Decimal]]:
+    """Return [(date, signed_amount), ...] for cash deposits (+) and withdrawals (-)."""
+    rows = db.execute(
+        select(Activity).where(
+            Activity.account_id == account_id,
+            Activity.activity_type.in_(EXTERNAL_FLOW_TYPES),
+            Activity.date >= start_date,
+            Activity.date <= end_date,
+        ).order_by(Activity.date)
+    ).scalars().all()
+    return [
+        (act.date, act.net_amount)
+        for act in rows
+        if act.date is not None and act.net_amount is not None
+    ]
 
 
 def compute_daily_returns(snapshots: List[PortfolioSnapshot], db: Session, account_id: int) -> List[float]:
@@ -143,6 +167,11 @@ def compute_performance(db: Session, account_id: int, period: str = "1Y") -> Per
 
 
 def compute_monthly_returns(db: Session, account_id: int) -> List[MonthlyReturn]:
+    """Modified Dietz monthly returns, adjusted for external cash flows.
+
+    R = (End - Begin - NetFlows) / (Begin + WeightedFlows)
+    where weight_i = (DaysInMonth - DaysSinceStartOfMonth_i) / DaysInMonth
+    """
     snapshots = db.execute(
         select(PortfolioSnapshot)
         .where(PortfolioSnapshot.account_id == account_id)
@@ -152,7 +181,7 @@ def compute_monthly_returns(db: Session, account_id: int) -> List[MonthlyReturn]
     if not snapshots:
         return []
 
-    # Group snapshots by year-month, take first and last
+    # Group snapshots by year-month
     months: dict[Tuple[int, int], list] = {}
     for s in snapshots:
         key = (s.date.year, s.date.month)
@@ -160,13 +189,39 @@ def compute_monthly_returns(db: Session, account_id: int) -> List[MonthlyReturn]
 
     results = []
     for (year, month), snaps in sorted(months.items()):
-        if len(snaps) >= 2:
-            start_eq = float(snaps[0].equity)
-            end_eq = float(snaps[-1].equity)
-            ret = (end_eq - start_eq) / start_eq if start_eq > 0 else None
-            results.append(MonthlyReturn(year=year, month=month, return_pct=round(ret, 6) if ret is not None else None))
-        else:
+        if len(snaps) < 2:
             results.append(MonthlyReturn(year=year, month=month, return_pct=None))
+            continue
+
+        begin_eq = float(snaps[0].equity)
+        end_eq = float(snaps[-1].equity)
+        days_in_month = calendar.monthrange(year, month)[1]
+
+        # Fetch external flows for this month
+        month_start = snaps[0].date
+        month_end = snaps[-1].date
+        flows = _get_external_flows_in_range(db, account_id, month_start, month_end)
+
+        net_flows = 0.0
+        weighted_flows = 0.0
+        for flow_date, amount in flows:
+            amt = float(amount)
+            net_flows += amt
+            day_offset = (flow_date - date(year, month, 1)).days
+            weight = (days_in_month - day_offset) / days_in_month
+            weighted_flows += weight * amt
+
+        denom = begin_eq + weighted_flows
+        if denom <= 0:
+            results.append(MonthlyReturn(year=year, month=month, return_pct=None))
+            continue
+
+        ret = (end_eq - begin_eq - net_flows) / denom
+        results.append(MonthlyReturn(
+            year=year, month=month,
+            return_pct=round(ret, 6),
+        ))
+
     return results
 
 

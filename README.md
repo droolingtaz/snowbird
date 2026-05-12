@@ -12,6 +12,7 @@ Self-hosted portfolio analytics and paper-trading dashboard built on [Alpaca Mar
 - Real-time positions, open orders, and account equity via Alpaca sync
 - Today P/L and Total P/L stat tiles (computed from `equity - last_equity`)
 - Daily equity snapshots for time-weighted return (TWR) calculation
+- Monthly returns use Modified Dietz to adjust for external cash flows (deposits/withdrawals)
 - Historical portfolio backfill (up to 1 year of daily snapshots on first sync)
 
 ### Benchmarking
