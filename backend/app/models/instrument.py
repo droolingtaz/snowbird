@@ -19,6 +19,8 @@ class Instrument(Base):
     industry: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     is_etf: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     etf_category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    dividend_tax_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    dividend_tax_notes: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     dividend_yield: Mapped[Optional[Decimal]] = mapped_column(Numeric(9, 4), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

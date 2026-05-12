@@ -17,4 +17,6 @@ class HoldingOut(BaseModel):
     sector: Optional[str] = None
     asset_class: Optional[str] = None
     name: Optional[str] = None
+    dividend_tax_type: Optional[str] = None
+    dividend_tax_notes: Optional[str] = None
     bucket_names: List[str] = []

@@ -11,6 +11,8 @@ interface Holding {
   unrealized_plpc?: number;
   weight_pct: number;
   sector?: string;
+  dividend_tax_type?: string;
+  dividend_tax_notes?: string;
   bucket_names: string[];
 }
 
@@ -41,6 +43,7 @@ export default function HoldingsTable({ holdings }: { holdings: Holding[] }) {
             <th className="text-right">Unrealized P/L</th>
             <th className="text-right">Weight</th>
             <th>Sector</th>
+            <th>Tax Type</th>
             <th>Buckets</th>
           </tr>
         </thead>
@@ -71,6 +74,13 @@ export default function HoldingsTable({ holdings }: { holdings: Holding[] }) {
                 </td>
                 <td className="text-right mono">{h.weight_pct.toFixed(1)}%</td>
                 <td className="text-text-secondary text-xs">{h.sector ?? "—"}</td>
+                <td className="text-text-secondary text-xs">
+                  {h.dividend_tax_type ? (
+                    <span title={h.dividend_tax_notes ?? undefined}>{h.dividend_tax_type}</span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td>
                   <div className="flex flex-wrap gap-1">
                     {h.bucket_names.map((b) => (

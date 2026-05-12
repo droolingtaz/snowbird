@@ -44,6 +44,8 @@ def list_holdings(account_id: int, current_user: CurrentUser, db: DbSession):
             sector=inst.sector if inst else None,
             asset_class=inst.asset_class if inst else None,
             name=inst.name if inst else None,
+            dividend_tax_type=inst.dividend_tax_type if inst else None,
+            dividend_tax_notes=inst.dividend_tax_notes if inst else None,
             bucket_names=symbol_buckets.get(pos.symbol, []),
         ))
 
