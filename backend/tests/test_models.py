@@ -32,6 +32,7 @@ def test_account_encrypted_secret_stored(db):
 
 def test_bucket_with_holdings(db, demo_account):
     b = Bucket(
+        user_id=demo_account.user_id,
         account_id=demo_account.id,
         name="Core Equity",
         target_weight_pct=Decimal("60.0000"),
@@ -39,8 +40,12 @@ def test_bucket_with_holdings(db, demo_account):
     )
     db.add(b); db.flush()
     db.add_all([
-        BucketHolding(bucket_id=b.id, symbol="VTI", target_weight_within_bucket_pct=Decimal("70")),
-        BucketHolding(bucket_id=b.id, symbol="VXUS", target_weight_within_bucket_pct=Decimal("30")),
+        BucketHolding(bucket_id=b.id, user_id=demo_account.user_id,
+                      account_id=demo_account.id, symbol="VTI",
+                      target_weight_within_bucket_pct=Decimal("70")),
+        BucketHolding(bucket_id=b.id, user_id=demo_account.user_id,
+                      account_id=demo_account.id, symbol="VXUS",
+                      target_weight_within_bucket_pct=Decimal("30")),
     ])
     db.commit()
     assert len(b.holdings) == 2

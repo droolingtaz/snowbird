@@ -38,8 +38,10 @@ def _add_div_activities(db, account_id, amounts, base_time=None):
     db.commit()
 
 
-def _seed_buckets_and_positions(db, account_id):
+def _seed_buckets_and_positions(db, account):
     """Create a standard bucket setup for rebalance tests."""
+    account_id = account.id
+    user_id = account.user_id
     db.add_all([
         Position(
             account_id=account_id, symbol="VTI",
@@ -56,20 +58,22 @@ def _seed_buckets_and_positions(db, account_id):
     ])
 
     equity = Bucket(
-        account_id=account_id, name="Equity",
+        user_id=user_id, account_id=account_id, name="Equity",
         target_weight_pct=Decimal("60"),
     )
     bonds = Bucket(
-        account_id=account_id, name="Bonds",
+        user_id=user_id, account_id=account_id, name="Bonds",
         target_weight_pct=Decimal("40"),
     )
     db.add_all([equity, bonds])
     db.flush()
 
     db.add_all([
-        BucketHolding(bucket_id=equity.id, symbol="VTI",
+        BucketHolding(bucket_id=equity.id, user_id=user_id,
+                      account_id=account_id, symbol="VTI",
                       target_weight_within_bucket_pct=Decimal("100")),
-        BucketHolding(bucket_id=bonds.id, symbol="BND",
+        BucketHolding(bucket_id=bonds.id, user_id=user_id,
+                      account_id=account_id, symbol="BND",
                       target_weight_within_bucket_pct=Decimal("100")),
     ])
     db.commit()
@@ -80,8 +84,8 @@ def _seed_buckets_and_positions(db, account_id):
 
 def test_tax_reserve_bucket_idempotent(db, demo_account):
     """Calling ensure_tax_reserve_bucket twice creates only one bucket."""
-    b1 = ensure_tax_reserve_bucket(db, demo_account.id)
-    b2 = ensure_tax_reserve_bucket(db, demo_account.id)
+    b1 = ensure_tax_reserve_bucket(db, demo_account.id, user_id=demo_account.user_id)
+    b2 = ensure_tax_reserve_bucket(db, demo_account.id, user_id=demo_account.user_id)
     assert b1.id == b2.id
     assert b1.name == TAX_RESERVE_BUCKET_NAME
     assert float(b1.target_weight_pct) == 0.0
@@ -101,13 +105,13 @@ def test_tax_reserve_bucket_idempotent(db, demo_account):
 
 def test_tax_reserve_bucket_custom_symbol(db, demo_account):
     """Tax reserve bucket respects custom symbol."""
-    b = ensure_tax_reserve_bucket(db, demo_account.id, symbol="BIL")
+    b = ensure_tax_reserve_bucket(db, demo_account.id, symbol="BIL", user_id=demo_account.user_id)
     assert b.holdings[0].symbol == "BIL"
 
 
 def test_compute_plan_24pct(db, demo_account):
     """$1000 dividends @ 24% -> $240 tax reserve, $760 investable."""
-    _seed_buckets_and_positions(db, demo_account.id)
+    _seed_buckets_and_positions(db, demo_account)
     settings = get_or_create_settings(db, demo_account.id)
 
     with patch("app.services.market_data.get_quote_cached") as mock_quote:
@@ -141,8 +145,8 @@ def test_compute_plan_zero_dividends(db, demo_account):
 
 def test_compute_plan_excludes_tax_reserve_bucket(db, demo_account):
     """Tax reserve bucket (0% weight) should not pollute rebalance math."""
-    _seed_buckets_and_positions(db, demo_account.id)
-    ensure_tax_reserve_bucket(db, demo_account.id)
+    _seed_buckets_and_positions(db, demo_account)
+    ensure_tax_reserve_bucket(db, demo_account.id, user_id=demo_account.user_id)
     settings = get_or_create_settings(db, demo_account.id)
 
     with patch("app.services.market_data.get_quote_cached") as mock_quote:
@@ -162,8 +166,8 @@ def test_compute_plan_excludes_tax_reserve_bucket(db, demo_account):
 
 def test_execute_records_run(db, demo_account):
     """Successful execution writes a run row with status='executed'."""
-    _seed_buckets_and_positions(db, demo_account.id)
-    ensure_tax_reserve_bucket(db, demo_account.id)
+    _seed_buckets_and_positions(db, demo_account)
+    ensure_tax_reserve_bucket(db, demo_account.id, user_id=demo_account.user_id)
     settings = get_or_create_settings(db, demo_account.id)
 
     with patch("app.services.market_data.get_quote_cached") as mock_quote:
@@ -197,8 +201,8 @@ def test_execute_records_run(db, demo_account):
 
 def test_execute_handles_partial_failure(db, demo_account):
     """If one order fails, status='failed' and error is captured."""
-    _seed_buckets_and_positions(db, demo_account.id)
-    ensure_tax_reserve_bucket(db, demo_account.id)
+    _seed_buckets_and_positions(db, demo_account)
+    ensure_tax_reserve_bucket(db, demo_account.id, user_id=demo_account.user_id)
     settings = get_or_create_settings(db, demo_account.id)
 
     with patch("app.services.market_data.get_quote_cached") as mock_quote:

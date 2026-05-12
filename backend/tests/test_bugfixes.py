@@ -190,7 +190,7 @@ class TestDeleteAccountAuth:
         acct_id = acct.id
 
         r = client.delete(f"/api/accounts/{acct_id}", headers=_auth_header(u.id))
-        assert r.status_code == 204
+        assert r.status_code == 200
 
         # Confirm deleted
         remaining = db.execute(

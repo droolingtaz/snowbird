@@ -41,7 +41,7 @@ class AlpacaAccount(Base):
         "Activity", back_populates="account", cascade="all, delete-orphan"
     )
     buckets: Mapped[list["Bucket"]] = relationship(  # type: ignore[name-defined]
-        "Bucket", back_populates="account", cascade="all, delete-orphan"
+        "Bucket", back_populates="account",
     )
     snapshots: Mapped[list["PortfolioSnapshot"]] = relationship(  # type: ignore[name-defined]
         "PortfolioSnapshot", back_populates="account", cascade="all, delete-orphan"

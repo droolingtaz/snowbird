@@ -19,3 +19,6 @@ class User(Base):
     accounts: Mapped[list["AlpacaAccount"]] = relationship(  # type: ignore[name-defined]
         "AlpacaAccount", back_populates="user", cascade="all, delete-orphan"
     )
+    buckets: Mapped[list["Bucket"]] = relationship(  # type: ignore[name-defined]
+        "Bucket", back_populates="user", cascade="all, delete-orphan"
+    )

@@ -69,9 +69,12 @@ def get_unreinvested_dividend_cash(db: Session, account_id: int) -> Decimal:
 TAX_RESERVE_BUCKET_NAME = "Tax Reserve"
 
 
-def ensure_tax_reserve_bucket(db: Session, account_id: int, symbol: str = "CSHI") -> Bucket:
+def ensure_tax_reserve_bucket(
+    db: Session, account_id: int, symbol: str = "CSHI", *, user_id: int,
+) -> Bucket:
     bucket = db.execute(
         select(Bucket).where(
+            Bucket.user_id == user_id,
             Bucket.account_id == account_id,
             Bucket.name == TAX_RESERVE_BUCKET_NAME,
         )
@@ -79,6 +82,7 @@ def ensure_tax_reserve_bucket(db: Session, account_id: int, symbol: str = "CSHI"
 
     if bucket is None:
         bucket = Bucket(
+            user_id=user_id,
             account_id=account_id,
             name=TAX_RESERVE_BUCKET_NAME,
             target_weight_pct=Decimal(0),
@@ -97,6 +101,8 @@ def ensure_tax_reserve_bucket(db: Session, account_id: int, symbol: str = "CSHI"
     if holding is None:
         holding = BucketHolding(
             bucket_id=bucket.id,
+            user_id=user_id,
+            account_id=account_id,
             symbol=symbol,
             target_weight_within_bucket_pct=Decimal(100),
         )

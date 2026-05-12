@@ -8,7 +8,7 @@ class BucketHoldingCreate(BaseModel):
 
 
 class BucketCreate(BaseModel):
-    account_id: int
+    account_id: Optional[int] = None
     name: str
     target_weight_pct: float
     color: Optional[str] = None
@@ -24,6 +24,10 @@ class BucketUpdate(BaseModel):
     holdings: Optional[List[BucketHoldingCreate]] = None
 
 
+class BucketLink(BaseModel):
+    account_id: Optional[int] = None
+
+
 class BucketHoldingOut(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -36,7 +40,9 @@ class BucketOut(BaseModel):
     model_config = {"from_attributes": True}
 
     id: int
-    account_id: int
+    user_id: int
+    account_id: Optional[int] = None
+    linked: bool = False
     name: str
     target_weight_pct: float
     color: Optional[str] = None

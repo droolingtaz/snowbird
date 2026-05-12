@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useBuckets, useBucketDrift, useDeleteBucket } from "../api/hooks";
+import { useBuckets, useBucketDrift, useDeleteBucket, useLinkBucket, useAccounts } from "../api/hooks";
 import { useAuthStore } from "../store/auth";
 import Card from "../components/Card";
 import BucketEditor from "../components/BucketEditor";
 import RebalancePanel from "../components/RebalancePanel";
-import { Plus, Edit2, Trash2, Scale } from "lucide-react";
+import { Plus, Edit2, Trash2, Scale, Link2, Unlink } from "lucide-react";
 import { clsx } from "clsx";
 
 function RingChart({ actual, target, color }: { actual: number; target: number; color?: string }) {
@@ -43,10 +43,63 @@ function RingChart({ actual, target, color }: { actual: number; target: number; 
   );
 }
 
+function LinkDropdown({ bucket, accounts }: { bucket: any; accounts: any[] }) {
+  const linkBucket = useLinkBucket();
+  const [open, setOpen] = useState(false);
+
+  const activeAccounts = (accounts ?? []).filter((a: any) => a.active);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="btn-ghost p-1.5 rounded"
+        title={bucket.linked ? "Change linked account" : "Link to account"}
+      >
+        {bucket.linked ? <Link2 className="w-3.5 h-3.5" /> : <Unlink className="w-3.5 h-3.5 text-text-tertiary" />}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-20 bg-surface-1 border border-border rounded-lg shadow-lg py-1 min-w-[180px]">
+          {activeAccounts.map((acct: any) => (
+            <button
+              key={acct.id}
+              onClick={() => {
+                linkBucket.mutate({ id: bucket.id, account_id: acct.id });
+                setOpen(false);
+              }}
+              className={clsx(
+                "w-full text-left px-3 py-1.5 text-sm hover:bg-surface-2",
+                bucket.account_id === acct.id && "text-accent font-medium"
+              )}
+            >
+              {acct.label} ({acct.mode})
+            </button>
+          ))}
+          {bucket.linked && (
+            <button
+              onClick={() => {
+                linkBucket.mutate({ id: bucket.id, account_id: null });
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-surface-2 text-red-loss border-t border-border"
+            >
+              Unlink
+            </button>
+          )}
+          {activeAccounts.length === 0 && (
+            <p className="px-3 py-1.5 text-xs text-text-tertiary">No active accounts</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Buckets() {
   const accountId = useAuthStore((s) => s.accountId);
   const { data: buckets = [], isLoading } = useBuckets();
   const { data: drift = [] } = useBucketDrift();
+  const { data: accounts = [] } = useAccounts();
   const deleteBucket = useDeleteBucket();
 
   const [showCreate, setShowCreate] = useState(false);
@@ -54,6 +107,7 @@ export default function Buckets() {
   const [showRebalance, setShowRebalance] = useState(false);
 
   const totalTarget = (buckets as any[]).reduce((s: number, b: any) => s + b.target_weight_pct, 0);
+  const hasLinkedBuckets = (buckets as any[]).some((b: any) => b.linked);
 
   return (
     <div className="space-y-5">
@@ -62,17 +116,25 @@ export default function Buckets() {
           <h1 className="text-lg font-semibold">Buckets</h1>
           <p className="text-xs text-text-secondary mt-0.5">
             Total target: {totalTarget.toFixed(1)}% {Math.abs(totalTarget - 100) > 0.1 && (
-              <span className="text-orange-400">(≠ 100%)</span>
+              <span className="text-orange-400">(&#8800; 100%)</span>
             )}
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setShowRebalance(true)}
-            className="btn-ghost gap-1.5 text-sm"
-          >
-            <Scale className="w-4 h-4" /> Rebalance
-          </button>
+          <div className="relative group">
+            <button
+              onClick={() => accountId && hasLinkedBuckets && setShowRebalance(true)}
+              disabled={!accountId || !hasLinkedBuckets}
+              className={clsx("btn-ghost gap-1.5 text-sm", (!accountId || !hasLinkedBuckets) && "opacity-50 cursor-not-allowed")}
+            >
+              <Scale className="w-4 h-4" /> Rebalance
+            </button>
+            {(!accountId || !hasLinkedBuckets) && (
+              <div className="absolute hidden group-hover:block bottom-full mb-1 left-1/2 -translate-x-1/2 whitespace-nowrap bg-surface-2 text-text-secondary text-2xs px-2 py-1 rounded shadow-lg border border-border">
+                Link buckets to an account first
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setShowCreate(true)}
             className="btn-primary gap-1.5 text-sm"
@@ -104,19 +166,29 @@ export default function Buckets() {
                     color={bucket.color}
                   />
                   <div>
-                    <h3 className="font-medium">{bucket.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-medium">{bucket.name}</h3>
+                      {!bucket.linked && (
+                        <span className="text-2xs px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400 font-medium">
+                          Unlinked
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-text-secondary">
                       Target: {bucket.target_weight_pct}%
                     </p>
-                    <p className={clsx(
-                      "text-xs mono",
-                      Math.abs(bucket.drift_pct ?? 0) < 2 ? "text-green-profit" : "text-orange-400"
-                    )}>
-                      Drift: {(bucket.drift_pct ?? 0).toFixed(2)}%
-                    </p>
+                    {bucket.linked && (
+                      <p className={clsx(
+                        "text-xs mono",
+                        Math.abs(bucket.drift_pct ?? 0) < 2 ? "text-green-profit" : "text-orange-400"
+                      )}>
+                        Drift: {(bucket.drift_pct ?? 0).toFixed(2)}%
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-1">
+                  <LinkDropdown bucket={bucket} accounts={accounts as any[]} />
                   <button
                     onClick={() => setEditingBucket(bucket)}
                     className="btn-ghost p-1.5 rounded"
